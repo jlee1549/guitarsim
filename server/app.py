@@ -360,9 +360,9 @@ class GuitarSim:
                                 click=(self.strum, "[]"),
                             )
                             # Trigger JS playback when audio_b64 changes
-                            client.ServerStateChange(
-                                trigger_on=("audio_b64",),
-                                update="__playWav(audio_b64)",
+                            client.ClientStateChange(
+                                value="audio_b64",
+                                change="__playWav(audio_b64)",
                             )
                         with v.VCol():
                             html.Div(
@@ -384,7 +384,7 @@ class GuitarSim:
                         with v.VCardText(classes="pa-1"):
                             plotly.Figure(
                                 display_mode_bar=False,
-                                v_model=("figure",),
+                                state_variable_name="figure",
                             )
 
     @staticmethod
