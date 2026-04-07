@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guitar Electronics Simulator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: #1a1a1a; background: #f5f5f3; margin: 0; padding: 1.5rem; }
+@media (prefers-color-scheme: dark) {
+  body { background: #1a1a1a; color: #e8e8e6; }
+  .card { background: #242424; border-color: rgba(255,255,255,0.1); }
+  select, input[type=number] { background: #2a2a2a; color: #e8e8e6; border-color: rgba(255,255,255,0.15); }
+  .tog { border-color: rgba(255,255,255,0.2); color: #aaa; }
+  .tog.on { background: #1a3a5c; color: #7ab8f5; border-color: #3a78c9; }
+  .pluck-btn { border-color: rgba(255,255,255,0.2); color: #e8e8e6; }
+}
+h1 { font-size: 18px; font-weight: 500; margin: 0 0 1.5rem; }
+.sl { font-size: 11px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing:.07em; margin:1.2rem 0 .5rem; }
+.card { background:#fff; border:0.5px solid rgba(0,0,0,0.12); border-radius:10px; padding:.85rem 1rem; }
+.ctrl { display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:12px; color:#666; }
+.ctrl label { min-width:108px; }
+.ctrl input[type=range] { flex:1; accent-color:#378ADD; }
+.ctrl span.val { min-width:56px; font-size:12px; font-weight:500; color:#1a1a1a; text-align:right; }
+@media (prefers-color-scheme: dark) { .ctrl span.val{color:#e8e8e6;} .ctrl{color:#aaa;} }
+.pu-label { font-size:13px; font-weight:500; margin-bottom:.5rem; }
+select { font-size:12px; width:100%; padding:4px 6px; margin-bottom:6px; border:0.5px solid rgba(0,0,0,0.2); border-radius:6px; background:#fff; }
+input[type=number] { font-size:12px; width:100%; padding:3px 6px; border:0.5px solid rgba(0,0,0,0.2); border-radius:6px; background:#fff; }
+.tog-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:.75rem; }
+.tog { padding:5px 12px; font-size:12px; border:0.5px solid rgba(0,0,0,0.2); border-radius:7px; background:transparent; cursor:pointer; color:#555; }
+.tog.on { background:#e8f1fb; color:#1a5fa8; border-color:#3a78c9; font-weight:500; }
+.pluck-btn { padding:8px 24px; font-size:13px; font-weight:500; border:0.5px solid rgba(0,0,0,0.2); border-radius:7px; background:transparent; cursor:pointer; color:#1a1a1a; }
+.pluck-btn:hover { background:rgba(0,0,0,0.04); }
+.pluck-btn:active { transform:scale(0.97); }
+.grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
+.muted { color:#888; font-size:12px; }
+.wrap { max-width:960px; margin:0 auto; }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px; }
+.sub { font-size:10px; color:#888; margin-bottom:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Guitar Electronics Simulator</h1>
+<div class="sl">configuration</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:.75rem;">
+  <div style="flex:1;min-width:150px;">
+    <div class="sub">pickup layout</div>
+    <select id="layout" onchange="applyLayout()">
+      <option value="HH">HH — Les Paul style</option>
+      <option value="HSS">HSS — Strat style</option>
+      <option value="HHS">HHS</option>
+      <option value="SSS">SSS — Strat 3x single</option>
+      <option value="H">H — single humbucker</option>
+      <option value="SS">SS — Telecaster style</option>
+    </select>
+  </div>
+  <div style="flex:1;min-width:150px;">
+    <div class="sub">wiring</div>
+    <select id="wiring" onchange="updateAll(true)">
+      <option value="50s">50s wiring</option>
+      <option value="modern">modern wiring</option>
+    </select>
+  </div>
+</div>
+<div class="sl">pickup selector</div>
+<div class="tog-row" id="toggleRow"></div>
+<div class="sl">pickups</div>
+<div class="grid2" id="puCards"></div>
+<div class="sl">controls</div>
+<div class="grid2" id="ctrlCards"></div>
+<div class="sl">shared</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:.5rem;">
+  <div class="card">
+    <div class="sub">cable capacitance</div>
+    <div class="ctrl">
+      <input type="range" id="ccable" min="0" max="2000" step="50" value="500"
+        oninput="document.getElementById('ccableVal').textContent=this.value+' pF';updateAll(true)">
+      <span class="val" id="ccableVal">500 pF</span>
+    </div>
+    <div class="sub" style="margin-top:8px;">treble bleed</div>
+    <select id="tbleed" onchange="updateAll(true)">
+      <option value="none">none</option>
+      <option value="cap">cap only (100 pF)</option>
+      <option value="network">cap + resistor (100 pF / 150k)</option>
+    </select>
+  </div>
+</div>
+<div style="display:flex;align-items:center;gap:14px;margin:1.2rem 0;">
+  <button class="pluck-btn" onclick="pluck()">strum</button>
+  <span class="muted" id="audioStatus">click to hear E A D G B e</span>
+</div>
+<div style="position:relative;width:100%;height:300px;margin-top:.5rem;">
+  <canvas id="chart"></canvas>
+</div>
+<div id="legend" style="display:flex;gap:16px;margin-top:8px;font-size:11px;color:#888;flex-wrap:wrap;"></div>
+<div id="stats" style="margin-top:.7rem;font-size:11px;color:#888;line-height:2;"></div>
+</div>
+<script>
+// ── Cooley-Tukey in-place radix-2 FFT ────────────────────────────────────
+function fft(re, im, inverse) {
+  const N = re.length;
+  for (let i=1,j=0; i<N; i++) {
+    let bit=N>>1;
+    for(;j&bit;bit>>=1) j^=bit;
+    j^=bit;
+    if(i<j){ let t=re[i];re[i]=re[j];re[j]=t; t=im[i];im[i]=im[j];im[j]=t; }
+  }
+  for(let len=2;len<=N;len<<=1){
+    const ang=2*Math.PI/len*(inverse?1:-1);
+    const wRe=Math.cos(ang), wIm=Math.sin(ang);
+    for(let i=0;i<N;i+=len){
+      let cRe=1,cIm=0;
+      for(let j=0;j<len/2;j++){
+        const uRe=re[i+j],uIm=im[i+j];
+        const vRe=re[i+j+len/2],vIm=im[i+j+len/2];
+        const tvRe=vRe*cRe-vIm*cIm, tvIm=vRe*cIm+vIm*cRe;
+        re[i+j]=uRe+tvRe; im[i+j]=uIm+tvIm;
+        re[i+j+len/2]=uRe-tvRe; im[i+j+len/2]=uIm-tvIm;
+        const nr=cRe*wRe-cIm*wIm; cIm=cRe*wIm+cIm*wRe; cRe=nr;
+      }
+    }
+  }
+  if(inverse) for(let i=0;i<N;i++){re[i]/=N;im[i]/=N;}
+}
+// ── Pickup database ───────────────────────────────────────────────────────
+const PICKUP_DB = {
+  humbucker: [
+    {name:"PAF-style (low wind)",   rdc:7500,  L:3.8, Cp:120e-12},
+    {name:"PAF-style (high wind)",  rdc:8500,  L:4.2, Cp:140e-12},
+    {name:"Seth Lover style",       rdc:7800,  L:4.0, Cp:130e-12},
+    {name:"hot humbucker",          rdc:13000, L:5.5, Cp:160e-12},
+    {name:"vintage PAF bridge",     rdc:8200,  L:4.1, Cp:135e-12},
+    {name:"custom...",              rdc:null,  L:null, Cp:null},
+  ],
+  single: [
+    {name:"Strat neck (vintage)",   rdc:5800,  L:2.2, Cp:60e-12},
+    {name:"Strat bridge (vintage)", rdc:6400,  L:2.5, Cp:65e-12},
+    {name:"Tele neck",              rdc:7200,  L:2.8, Cp:70e-12},
+    {name:"Tele bridge",            rdc:7800,  L:3.0, Cp:75e-12},
+    {name:"overwound single",       rdc:9000,  L:3.4, Cp:85e-12},
+    {name:"custom...",              rdc:null,  L:null, Cp:null},
+  ],
+  p90: [
+    {name:"P-90 neck (vintage)",    rdc:7200,  L:4.5, Cp:90e-12},
+    {name:"P-90 bridge (vintage)",  rdc:8000,  L:5.0, Cp:95e-12},
+    {name:"P-90 soapbar",           rdc:7600,  L:4.7, Cp:92e-12},
+    {name:"hot P-90",               rdc:10000, L:5.8, Cp:110e-12},
+    {name:"custom...",              rdc:null,  L:null, Cp:null},
+  ]
+};
+const LAYOUTS = {
+  HH:  [{pos:'neck',type:'humbucker'},{pos:'bridge',type:'humbucker'}],
+  HSS: [{pos:'neck',type:'humbucker'},{pos:'middle',type:'single'},{pos:'bridge',type:'single'}],
+  HHS: [{pos:'neck',type:'humbucker'},{pos:'middle',type:'humbucker'},{pos:'bridge',type:'single'}],
+  SSS: [{pos:'neck',type:'single'},{pos:'middle',type:'single'},{pos:'bridge',type:'single'}],
+  H:   [{pos:'bridge',type:'humbucker'}],
+  SS:  [{pos:'neck',type:'single'},{pos:'bridge',type:'single'}],
+};
+const POS_DEFAULTS = {
+  neck:   {dist:170, scale:628},
+  middle: {dist:90,  scale:648},
+  bridge: {dist:38,  scale:628},
+};
+const TOGGLE_PRESETS = {
+  1:[['bridge',[0]]],
+  2:[['neck',[0]],['both',[0,1]],['bridge',[1]]],
+  3:[['neck',[0]],['neck+mid',[0,1]],['mid',[1]],['mid+bridge',[1,2]],['bridge',[2]]],
+};
+const COLORS=['#378ADD','#D85A30','#1D9E75','#7F77DD'];
+const FREQS=[]; for(let d=1.7;d<=4.3;d+=0.035) FREQS.push(Math.pow(10,d));
+let state={layout:'HH',pickups:[],toggleIdx:0,toggleOptions:[],anchor:null};
+let myChart=null, audioCtx=null;
+// ── Circuit model ─────────────────────────────────────────────────────────
+function pickupZ(f,pu){
+  const w=2*Math.PI*f;
+  const r=pu.rdc, xi=w*pu.L, m2=r*r+xi*xi;
+  const Yr=r/m2, Yi=-xi/m2+(pu.Cp>0?w*pu.Cp:0), Ym2=Yr*Yr+Yi*Yi;
+  return {r:Ym2>0?Yr/Ym2:1e9, i:Ym2>0?-Yi/Ym2:0};
+}
+function toneY(f,pu){
+  const w=2*Math.PI*f;
+  // knob=10: full Rtone in series → RC corner very high → near open
+  // knob=0:  Rs≈0 → cap directly to ground → max treble cut
+  const Rs=pu.Rtone*(pu.toneKnob/10)+10;
+  const Xt=pu.Ctone>0?-1/(w*pu.Ctone):-1e15;
+  const m2=Rs*Rs+Xt*Xt;
+  return {r:m2>0?Rs/m2:0, i:m2>0?-Xt/m2:0};
+}
+function bleedY(f,tbleed){
+  const w=2*Math.PI*f;
+  if(tbleed==='cap') return {r:0,i:w*100e-12};
+  if(tbleed==='network'){const Rb=150e3,Cb=100e-12,Xb=-1/(w*Cb),m2=Rb*Rb+Xb*Xb;return {r:Rb/m2,i:-Xb/m2};}
+  return {r:0,i:0};
+}
+function Yz(Y){const m2=Y.r*Y.r+Y.i*Y.i;return m2>0?{r:Y.r/m2,i:-Y.i/m2}:{r:1e9,i:0};}
+function addY(a,b){return{r:a.r+b.r,i:a.i+b.i};}
+function addZ(a,b){return{r:a.r+b.r,i:a.i+b.i};}
+function mag(z){return Math.sqrt(z.r*z.r+z.i*z.i);}
+// Pickup position comb filter
+// v=200 m/s: geometric mean across strings — puts bridge null ~2.6 kHz, neck ~590 Hz
+function positionCombGain(f,distMm,scaleMm){
+  const d=distMm/1000;
+  const v=200;
+  const arg=Math.PI*f*2*d/v;
+  return Math.abs(Math.sin(arg));
+}
+function chanGain(f,pu,Ccable,tbleed,wiring){
+  const w=2*Math.PI*f;
+  const Zs=pickupZ(f,pu);
+  const a=pu.volKnob/10, Rv1=pu.Rvol*(1-a), Rv2=pu.Rvol*a;
+  const Yt=toneY(f,pu), Ybl=bleedY(f,tbleed), Yc={r:0,i:Ccable>0?w*Ccable:0};
+  if(wiring==='50s'){
+    const Ysh=addY(addY(addY({r:Rv2>0?1/Rv2:0,i:0},Yt),Yc),Ybl);
+    const Zl=Yz(Ysh), Zd=addZ(addZ(Zs,{r:Rv1,i:0}),Zl);
+    return {gain:mag(Zl)/mag(Zd)||0, Zs, Rv1, Rv2, Yt};
+  } else {
+    const Yin=addY(addY({r:1/pu.Rvol,i:0},Yt),Ybl);
+    const Zin=Yz(Yin);
+    const v1=mag(Zin)/mag(addZ(Zs,Zin))||0;
+    const sm2=Zs.r*Zs.r+Zs.i*Zs.i, im2=Zin.r*Zin.r+Zin.i*Zin.i;
+    const Zth=Yz({r:(sm2>0?Zs.r/sm2:0)+(im2>0?Zin.r/im2:0),i:(sm2>0?-Zs.i/sm2:0)+(im2>0?-Zin.i/im2:0)});
+    const Zl2=Yz(addY({r:Rv2>0?1/Rv2:0,i:0},Yc));
+    const Zd2=addZ(addZ(Zth,{r:Rv1,i:0}),Zl2);
+    return {gain:v1*mag(Zl2)/mag(Zd2)||0, Zs, Rv1, Rv2, Yt};
+  }
+}
+function sweepSel(pickups,active,Ccable,tbleed,wiring){
+  return FREQS.map(f=>{
+    if(active.length===1){
+      const pu0=pickups[active[0]];
+      return chanGain(f,pu0,Ccable,tbleed,wiring).gain * positionCombGain(f,pu0.posDistMm,pu0.posScaleMm);
+    }
+    const w=2*Math.PI*f;
+    const chs=active.map(idx=>{
+      const c=chanGain(f,pickups[idx],0,'none',wiring);
+      c.combGain=positionCombGain(f,pickups[idx].posDistMm,pickups[idx].posScaleMm);
+      return c;
+    });
+    let Ysr=0,Ysi=0,Yhr=0,Yhi=0;
+    chs.forEach(c=>{
+      const cs=c.combGain||1;
+      const Zser={r:(c.Zs.r+c.Rv1)/cs,i:c.Zs.i/cs}, sm2=Zser.r*Zser.r+Zser.i*Zser.i;
+      if(sm2>0){Ysr+=Zser.r/sm2;Ysi+=-Zser.i/sm2;}
+      Yhr+=(c.Rv2>0?1/c.Rv2:0)+c.Yt.r; Yhi+=c.Yt.i;
+    });
+    Yhi+=(Ccable>0?w*Ccable:0);
+    const Ybl=bleedY(f,tbleed); Yhr+=Ybl.r; Yhi+=Ybl.i;
+    const Zl=Yz({r:Yhr,i:Yhi}), Zth=Yz({r:Ysr,i:Ysi});
+    return mag(Zl)/mag(addZ(Zth,Zl))||0;
+  });
+}
+function getActive(){return state.toggleOptions[state.toggleIdx][1];}
+function getWiring(){return document.getElementById('wiring').value;}
+function recomputeAnchor(){
+  const cable=+document.getElementById('ccable').value*1e-12;
+  const tbleed=document.getElementById('tbleed').value;
+  const refs=state.pickups.map(p=>({...p,volKnob:10,toneKnob:10}));
+  const s=sweepSel(refs,getActive(),cable,tbleed,getWiring());
+  state.anchor=Math.max(...s)||1;
+}
+function toDB(v){return 20*Math.log10(Math.max(v,1e-12)/state.anchor);}
+function updateAll(resetAnchor){
+  if(resetAnchor||!state.anchor) recomputeAnchor();
+  const cable=+document.getElementById('ccable').value*1e-12;
+  const tbleed=document.getElementById('tbleed').value;
+  const wiring=getWiring(), active=getActive();
+  const cur=sweepSel(state.pickups,active,cable,tbleed,wiring);
+  const refs=state.pickups.map(p=>({...p,volKnob:10,toneKnob:10}));
+  const ref=sweepSel(refs,active,cable,tbleed,wiring);
+  const curDB=cur.map(toDB), refDB=ref.map(toDB);
+  const all=[...curDB,...refDB].filter(isFinite);
+  const yMin=Math.floor((Math.min(...all)-3)/5)*5;
+  const yMax=Math.ceil((Math.max(...all)+2)/5)*5;
+  const pts=arr=>FREQS.map((f,i)=>({x:f,y:+arr[i].toFixed(2)}));
+  const togLabel=state.toggleOptions[state.toggleIdx][0];
+  const ds=[
+    {label:'current — '+togLabel,data:pts(curDB),borderColor:'#378ADD',backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:0.3,borderDash:[]},
+    {label:'reference (knobs at 10)',data:pts(refDB),borderColor:'#888',backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,3]}
+  ];
+  if(!myChart){
+    myChart=new Chart(document.getElementById('chart'),{
+      type:'line',data:{datasets:ds},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{
+          title:i=>Math.round(i[0].parsed.x)+' Hz',
+          label:c=>c.dataset.label+': '+c.parsed.y.toFixed(1)+' dB'
+        }}},
+        scales:{
+          x:{type:'logarithmic',min:80,max:18000,title:{display:true,text:'frequency (Hz)',font:{size:11}},
+            ticks:{callback:v=>{const s=[100,200,500,1000,2000,5000,10000];return s.includes(Math.round(v))?(v>=1000?v/1000+'k':v):null;}}},
+          y:{min:yMin,max:yMax,title:{display:true,text:'level (dB, 0 = wide open)',font:{size:11}},grid:{color:'rgba(128,128,128,0.12)'}}
+        }
+      }
+    });
+  } else {
+    myChart.data.datasets=ds;
+    myChart.options.scales.y.min=yMin;
+    myChart.options.scales.y.max=yMax;
+    myChart.update('none');
+  }
+  const nearest=t=>{let b=0;FREQS.forEach((f,i)=>{if(Math.abs(f-t)<Math.abs(FREQS[b]-t))b=i;});return b;};
+  const sign=v=>(v>=0?'+':'')+v.toFixed(1);
+  let pkIdx=0,pkVal=-Infinity;curDB.forEach((v,i)=>{if(v>pkVal){pkVal=v;pkIdx=i;}});
+  document.getElementById('stats').innerHTML=
+    `<b>${togLabel}</b> [${wiring}] — peak: <b>${Math.round(FREQS[pkIdx])} Hz</b> &nbsp;|&nbsp; `+
+    `200 Hz: <b>${sign(curDB[nearest(200)])} dB</b> &nbsp;`+
+    `500 Hz: <b>${sign(curDB[nearest(500)])} dB</b> &nbsp;`+
+    `1 kHz: <b>${sign(curDB[nearest(1000)])} dB</b> &nbsp;`+
+    `4 kHz: <b>${sign(curDB[nearest(4000)])} dB</b>`;
+  document.getElementById('legend').innerHTML=`
+    <span style="display:flex;align-items:center;gap:5px;"><span style="width:18px;height:2px;background:#378ADD;display:inline-block;border-radius:1px;"></span>current</span>
+    <span style="display:flex;align-items:center;gap:5px;"><span style="width:18px;height:0;border-top:2px dashed #888;display:inline-block;"></span>reference (knobs at 10)</span>`;
+}
+// ── Audio ─────────────────────────────────────────────────────────────────
+function buildIR(SR,normResp){
+  const N=4096; const re=new Float32Array(N); const im=new Float32Array(N);
+  for(let k=0;k<=N/2;k++){
+    const f=k*SR/N; if(f<30||f>20000){re[k]=0;continue;}
+    const logF=Math.log10(f);
+    const t=Math.max(0,Math.min(1,(logF-Math.log10(FREQS[0]))/(Math.log10(FREQS[FREQS.length-1])-Math.log10(FREQS[0]))));
+    const fi=Math.min(Math.floor(t*(FREQS.length-1)),FREQS.length-2);
+    re[k]=normResp[fi]*(1-(t*(FREQS.length-1)-fi))+normResp[fi+1]*(t*(FREQS.length-1)-fi);
+  }
+  for(let k=1;k<N/2;k++){re[N-k]=re[k];im[N-k]=0;}
+  fft(re,im,true);
+  let pkIdx=0,pkVal=0; for(let n=0;n<N;n++) if(Math.abs(re[n])>pkVal){pkVal=Math.abs(re[n]);pkIdx=n;}
+  const shift=N/2-pkIdx; const shifted=new Float32Array(N);
+  for(let n=0;n<N;n++) shifted[(n+shift+N)%N]=re[n];
+  for(let n=0;n<N;n++) shifted[n]*=0.5*(1-Math.cos(2*Math.PI*n/N));
+  return shifted;
+}
+function nextPow2(n){let p=1;while(p<n)p<<=1;return p;}
+function convolve(signal,ir){
+  const irLen=ir.length, blockSize=irLen;
+  const outLen=signal.length+irLen-1;
+  const out=new Float32Array(outLen);
+  const N=nextPow2(blockSize+irLen-1);
+  const irRe=new Float32Array(N), irIm=new Float32Array(N);
+  for(let i=0;i<irLen;i++) irRe[i]=ir[i];
+  fft(irRe,irIm,false);
+  for(let pos=0;pos<signal.length;pos+=blockSize){
+    const len=Math.min(blockSize,signal.length-pos);
+    const blkRe=new Float32Array(N), blkIm=new Float32Array(N);
+    for(let i=0;i<len;i++) blkRe[i]=signal[pos+i];
+    fft(blkRe,blkIm,false);
+    for(let k=0;k<N;k++){
+      const r=blkRe[k]*irRe[k]-blkIm[k]*irIm[k];
+      const im2=blkRe[k]*irIm[k]+blkIm[k]*irRe[k];
+      blkRe[k]=r; blkIm[k]=im2;
+    }
+    fft(blkRe,blkIm,true);
+    for(let i=0;i<N&&(pos+i)<outLen;i++) if(pos+i<out.length) out[pos+i]+=blkRe[i];
+  }
+  return out;
+}
+function pluck(){
+  if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  const SR=audioCtx.sampleRate;
+  const cable=+document.getElementById('ccable').value*1e-12;
+  const tbleed=document.getElementById('tbleed').value;
+  const wiring=getWiring(), active=getActive();
+  const freqResp=sweepSel(state.pickups,active,cable,tbleed,wiring);
+  const anch=Math.max(...freqResp)||1;
+  const norm=freqResp.map(v=>v/anch);
+  const ir=buildIR(SR,norm);
+  // Standard tuning E2 A2 D3 G3 B3 E4
+  const STRING_FREQS=[82.41,110.00,146.83,196.00,246.94,329.63];
+  const STRING_DECAY=[0.9992,0.9991,0.9990,0.9988,0.9986,0.9984];
+  const strumGap=0.06, noteDur=2.2;
+  const totalDur=strumGap*5+noteDur;
+  const totalSamples=Math.ceil(SR*totalDur);
+  const mixBuf=new Float32Array(totalSamples);
+  for(let s=0;s<6;s++){
+    const f0=STRING_FREQS[s], decay=STRING_DECAY[s];
+    const durSamples=Math.ceil(SR*noteDur);
+    const startSample=Math.round(s*strumGap*SR);
+    const period=Math.round(SR/f0);
+    const dl=new Float32Array(period);
+    for(let i=0;i<period;i++) dl[i]=(Math.random()*2-1);
+    let prev=0; for(let i=0;i<period;i++){const v=dl[i]-prev*0.9;prev=dl[i];dl[i]=v;}
+    const strOut=new Float32Array(durSamples);
+    for(let i=0;i<durSamples;i++){
+      const idx=i%period,nx=(i+1)%period; strOut[i]=dl[idx];
+      dl[idx]=decay*(dl[idx]+dl[nx])*0.5;
+    }
+    const conv=convolve(strOut,ir);
+    const strGain=0.9-s*0.06;
+    const copyLen=Math.min(conv.length,totalSamples-startSample);
+    for(let i=0;i<copyLen;i++) mixBuf[startSample+i]+=conv[i]*strGain;
+  }
+  let peak=0; for(let i=0;i<mixBuf.length;i++) peak=Math.max(peak,Math.abs(mixBuf[i]));
+  if(peak>0) for(let i=0;i<mixBuf.length;i++) mixBuf[i]/=peak;
+  const buf=audioCtx.createBuffer(1,totalSamples,SR);
+  buf.getChannelData(0).set(mixBuf);
+  const src=audioCtx.createBufferSource(); src.buffer=buf;
+  const gainNode=audioCtx.createGain();
+  gainNode.gain.setValueAtTime(0.75,audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+totalDur-0.1);
+  src.connect(gainNode); gainNode.connect(audioCtx.destination);
+  src.start(audioCtx.currentTime);
+  document.getElementById('audioStatus').textContent='playing — E A D G B e';
+  setTimeout(()=>document.getElementById('audioStatus').textContent='click to hear E A D G B e',
+    Math.ceil(totalDur*1000)+200);
+}
+// ── UI ────────────────────────────────────────────────────────────────────
+function applyLayout(){
+  const layout=document.getElementById('layout').value;
+  state.layout=layout;
+  const defs=LAYOUTS[layout];
+  state.pickups=defs.map(d=>({
+    pos:d.pos, type:d.type, preset:0,
+    rdc:PICKUP_DB[d.type][0].rdc, L:PICKUP_DB[d.type][0].L, Cp:PICKUP_DB[d.type][0].Cp,
+    Rvol:500e3, Rtone:500e3, Ctone:22e-9, volKnob:10, toneKnob:10,
+    posDistMm:POS_DEFAULTS[d.pos]?.dist??80,
+    posScaleMm:POS_DEFAULTS[d.pos]?.scale??628,
+  }));
+  const n=defs.length;
+  const presets=TOGGLE_PRESETS[n]||TOGGLE_PRESETS[2];
+  state.toggleOptions=presets;
+  state.toggleIdx=Math.max(0,presets.findIndex(p=>p[1].length===n));
+  renderUI(); updateAll(true);
+}
+function renderUI(){
+  const toggleRow=document.getElementById('toggleRow');
+  toggleRow.innerHTML='';
+  state.toggleOptions.forEach((opt,i)=>{
+    const b=document.createElement('button');
+    b.className='tog'+(i===state.toggleIdx?' on':'');
+    b.textContent=opt[0];
+    b.onclick=()=>{state.toggleIdx=i;renderToggles();updateAll(false);};
+    toggleRow.appendChild(b);
+  });
+  const puCards=document.getElementById('puCards');
+  puCards.innerHTML='';
+  state.pickups.forEach((pu,i)=>{
+    const db=PICKUP_DB[pu.type];
+    const card=document.createElement('div');
+    card.className='card';
+    card.innerHTML=`
+      <div class="pu-label" style="color:${COLORS[i]}">${pu.pos} (${pu.type==='humbucker'?'HB':pu.type==='p90'?'P90':'SC'})</div>
+      <select id="pu_preset_${i}" onchange="applyPreset(${i})">
+        ${db.map((p,j)=>`<option value="${j}"${j===pu.preset?' selected':''}>${p.name}</option>`).join('')}
+      </select>
+      <div id="pu_custom_${i}" style="${pu.preset===db.length-1?'':'display:none'}">
+        <div class="ctrl"><label>DC resistance</label><input type="number" id="pu_rdc_${i}" value="${(pu.rdc/1000).toFixed(1)}" step="0.1" min="1" max="30" onchange="setCustom(${i})"><span style="font-size:11px;color:#888;">kΩ</span></div>
+        <div class="ctrl"><label>Inductance</label><input type="number" id="pu_L_${i}" value="${pu.L.toFixed(1)}" step="0.1" min="0.5" max="12" onchange="setCustom(${i})"><span style="font-size:11px;color:#888;">H</span></div>
+        <div class="ctrl"><label>Self cap</label><input type="number" id="pu_cp_${i}" value="${(pu.Cp*1e12).toFixed(0)}" step="5" min="10" max="500" onchange="setCustom(${i})"><span style="font-size:11px;color:#888;">pF</span></div>
+      </div>
+      <div class="row2">
+        <div><div class="sub">volume pot</div>
+          <select id="pu_rvol_${i}" onchange="setPotVal(${i},'Rvol',this.value)">
+            <option value="250000"${pu.Rvol==250e3?' selected':''}>250 kΩ</option>
+            <option value="500000"${pu.Rvol==500e3?' selected':''}>500 kΩ</option>
+            <option value="1000000"${pu.Rvol==1e6?' selected':''}>1 MΩ</option>
+          </select>
+        </div>
+        <div><div class="sub">tone pot</div>
+          <select id="pu_rtone_${i}" onchange="setPotVal(${i},'Rtone',this.value)">
+            <option value="250000"${pu.Rtone==250e3?' selected':''}>250 kΩ</option>
+            <option value="500000"${pu.Rtone==500e3?' selected':''}>500 kΩ</option>
+            <option value="1000000"${pu.Rtone==1e6?' selected':''}>1 MΩ</option>
+          </select>
+        </div>
+      </div>`;
+    puCards.appendChild(card);
+  });
+  // append tone cap + position sliders to each pickup card
+  state.pickups.forEach((pu,i)=>{
+    const card=document.getElementById('puCards').children[i];
+    const extra=document.createElement('div');
+    extra.innerHTML=`
+      <div class="ctrl" style="margin-top:6px;"><label>tone cap</label>
+        <input type="range" id="pu_tcap_${i}" min="1" max="100" step="1" value="${(pu.Ctone*1e9).toFixed(0)}"
+          oninput="setPotVal(${i},'Ctone',this.value*1e-9);document.getElementById('pu_tcapV_${i}').textContent=this.value+' nF'">
+        <span class="val" id="pu_tcapV_${i}">${(pu.Ctone*1e9).toFixed(0)} nF</span>
+      </div>
+      <div style="border-top:0.5px solid rgba(0,0,0,0.08);margin-top:8px;padding-top:8px;">
+        <div class="sub" style="margin-bottom:4px;">position (string geometry)</div>
+        <div class="ctrl"><label>dist from bridge</label>
+          <input type="range" id="pu_dist_${i}" min="5" max="320" step="1" value="${pu.posDistMm}"
+            oninput="setPosDist(${i},this.value);document.getElementById('pu_distV_${i}').textContent=Math.round(this.value)+' mm'">
+          <span class="val" id="pu_distV_${i}">${pu.posDistMm} mm</span>
+        </div>
+        <div class="ctrl"><label>scale length</label>
+          <input type="range" id="pu_scale_${i}" min="580" max="700" step="1" value="${pu.posScaleMm}"
+            oninput="setPosScale(${i},this.value);document.getElementById('pu_scaleV_${i}').textContent=Math.round(this.value)+' mm'">
+          <span class="val" id="pu_scaleV_${i}">${pu.posScaleMm} mm</span>
+        </div>
+      </div>`;
+    card.appendChild(extra);
+  });
+  const ctrlCards=document.getElementById('ctrlCards');
+  ctrlCards.innerHTML='';
+  state.pickups.forEach((pu,i)=>{
+    const card=document.createElement('div');
+    card.className='card';
+    card.innerHTML=`
+      <div class="pu-label" style="color:${COLORS[i]}">${pu.pos} controls</div>
+      <div class="ctrl"><label>volume</label>
+        <input type="range" id="pu_vol_${i}" min="0" max="10" step="0.1" value="${pu.volKnob}"
+          oninput="setKnob(${i},'volKnob',this.value);document.getElementById('pu_volV_${i}').textContent=(+this.value).toFixed(1)">
+        <span class="val" id="pu_volV_${i}">${pu.volKnob.toFixed(1)}</span>
+      </div>
+      <div class="ctrl"><label>tone</label>
+        <input type="range" id="pu_tone_${i}" min="0" max="10" step="0.1" value="${pu.toneKnob}"
+          oninput="setKnob(${i},'toneKnob',this.value);document.getElementById('pu_toneV_${i}').textContent=(+this.value).toFixed(1)">
+        <span class="val" id="pu_toneV_${i}">${pu.toneKnob.toFixed(1)}</span>
+      </div>`;
+    ctrlCards.appendChild(card);
+  });
+}
+function renderToggles(){
+  document.querySelectorAll('#toggleRow .tog').forEach((b,i)=>b.classList.toggle('on',i===state.toggleIdx));
+}
+function applyPreset(i){
+  const idx=+document.getElementById('pu_preset_'+i).value;
+  const db=PICKUP_DB[state.pickups[i].type];
+  state.pickups[i].preset=idx;
+  if(db[idx].rdc!==null){state.pickups[i].rdc=db[idx].rdc;state.pickups[i].L=db[idx].L;state.pickups[i].Cp=db[idx].Cp;}
+  const cd=document.getElementById('pu_custom_'+i);
+  if(cd) cd.style.display=(idx===db.length-1)?'':'none';
+  updateAll(true);
+}
+function setCustom(i){
+  const rdc=parseFloat(document.getElementById('pu_rdc_'+i).value)*1000;
+  const L=parseFloat(document.getElementById('pu_L_'+i).value);
+  const Cp=parseFloat(document.getElementById('pu_cp_'+i).value)*1e-12;
+  if(!isNaN(rdc)) state.pickups[i].rdc=rdc;
+  if(!isNaN(L))   state.pickups[i].L=L;
+  if(!isNaN(Cp))  state.pickups[i].Cp=Cp;
+  updateAll(true);
+}
+function setPotVal(i,key,val){state.pickups[i][key]=+val;updateAll(true);}
+function setKnob(i,key,val){state.pickups[i][key]=+val;updateAll(false);}
+function setPosDist(i,v){state.pickups[i].posDistMm=+v;updateAll(true);}
+function setPosScale(i,v){state.pickups[i].posScaleMm=+v;updateAll(true);}
+applyLayout();
+</script>
+</body>
+</html>
