@@ -366,59 +366,116 @@ function pluck(){
   const anch=Math.max(...freqResp)||1;
   const norm=freqResp.map(v=>v/anch);
   const ir=buildIR(SR,norm);
-  // Standard tuning E2 A2 D3 G3 B3 E4
+  // Standard tuning, T60 decay, stiffness, per-string excitation bandwidth
   const STRING_FREQS  = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
-  const STRING_DECAY  = [0.9993, 0.9992, 0.9991, 0.9989, 0.9987, 0.9985];
-  const STRING_STIFF  = [0.0,    0.0,    0.001,  0.002,  0.004,  0.006];
-  const STRING_GAINS  = [0.90,   0.84,   0.78,   0.72,   0.66,   0.60];
-  const strumGap=0.055, noteDur=2.4;
-  const totalDur=strumGap*5+noteDur;
-  const totalSamples=Math.ceil(SR*totalDur);
-  const mixBuf=new Float32Array(totalSamples);
+  const STRING_T60    = [8.0,   7.0,    5.5,    4.0,    3.0,    2.2];
+  const STRING_STIFF  = [0.0,   0.0,    0.0005, 0.002,  0.004,  0.007];
+  const STRING_GAINS  = [0.88,  0.82,   0.76,   0.70,   0.64,   0.58];
+  // [excitation dur ms, lo freq factor, hi freq factor]
+  // wound strings: longer, warmer; plain strings: shorter, brighter
+  const STRING_EXC = [
+    [8.0, 60,  800],   // E2 wound
+    [7.0, 80,  1200],  // A2 wound
+    [6.0, 100, 1800],  // D3 wound
+    [4.0, 120, 3500],  // G3 plain (transition)
+    [3.0, 150, 6000],  // B3 plain
+    [2.5, 200, 8000],  // E4 plain
+  ];
 
-  function ksExtended(f0, decay, stiffness, nSamples) {
-    const periodExact = SR / f0;
-    const period = Math.floor(periodExact);
-    const frac = periodExact - period;
-    const apCoeff = (1 - frac) / (1 + frac);
+  const strumGap = 0.055, noteDur = 2.5;
+  const totalDur = strumGap * 5 + noteDur;
+  const totalSamples = Math.ceil(SR * totalDur);
+  const mixBuf = new Float32Array(totalSamples);
 
-    // Shaped pick attack excitation
-    const attackSamples = Math.min(Math.floor(0.003 * SR), period);
-    const dl = new Float32Array(period);
-    for (let i = 0; i < attackSamples; i++) {
-      const env = Math.exp(-5 * i / attackSamples);
+  function t60ToDecay(t60) {
+    // 0.001^(1/(SR*t60)) — gain per sample for -60dB in t60 seconds
+    return Math.pow(0.001, 1.0 / (SR * t60));
+  }
+
+  function bandpassExcitation(f0, durMs, loHz, hiHz) {
+    const period = Math.round(SR / f0);
+    const nAtt   = Math.min(Math.round(durMs * SR / 1000), period);
+    const dl     = new Float32Array(period);
+
+    // Attack/decay envelope + noise
+    for (let i = 0; i < nAtt; i++) {
+      const t   = i / nAtt;
+      const env = Math.exp(-6 * t) * (1 - Math.exp(-80 * t));
       dl[i] = (Math.random() * 2 - 1) * env;
     }
-    // Differentiate for click character
-    for (let i = attackSamples - 1; i > 0; i--) dl[i] -= dl[i-1];
-    // Low-level noise tail
-    for (let i = attackSamples; i < period; i++) dl[i] = (Math.random() - 0.5) * 0.08;
 
+    // Single-pole bandpass approximation: HP then LP
+    // HP at loHz
+    const hpAlpha = 1 / (1 + loHz / (SR / (2 * Math.PI)));
+    let hpPrev = 0;
+    for (let i = 0; i < period; i++) {
+      const v = dl[i] - hpPrev;
+      hpPrev  = hpAlpha * hpPrev + (1 - hpAlpha) * dl[i];
+      dl[i]   = v;
+    }
+    // LP at hiHz
+    const lpAlpha = Math.min(hiHz / (SR / (2 * Math.PI)), 0.99);
+    let lpPrev = 0;
+    for (let i = 0; i < period; i++) {
+      lpPrev = lpAlpha * dl[i] + (1 - lpAlpha) * lpPrev;
+      dl[i]  = lpPrev;
+    }
+
+    // Normalise delay line
+    let peak = 0;
+    for (let i = 0; i < period; i++) peak = Math.max(peak, Math.abs(dl[i]));
+    if (peak > 0) for (let i = 0; i < period; i++) dl[i] /= peak;
+    return dl;
+  }
+
+  function ksExtended(f0, t60, stiffness, durMs, loHz, hiHz, nSamples) {
+    const periodExact = SR / f0;
+    const period = Math.floor(periodExact);
+    const frac   = periodExact - period;
+    const apFrac = (1 - frac) / (1 + frac);
+    const decay  = t60ToDecay(t60);
+
+    const dl = bandpassExcitation(f0, durMs, loHz, hiHz);
     const out = new Float32Array(nSamples);
-    let apState = 0;
+    let apFState = 0, apSState = 0;
+
     for (let i = 0; i < nSamples; i++) {
       const idx = i % period, nx = (i + 1) % period;
       out[i] = dl[idx];
+
       // Low-pass + decay
       let lp = decay * (dl[idx] + dl[nx]) * 0.5;
-      // All-pass fractional delay
-      const apOut = apCoeff * (lp - apState) + dl[idx];
-      apState = apOut;
-      // Stiffness dispersion
-      dl[idx] = stiffness > 0 ? stiffness * apOut + (1 - stiffness) * lp : apOut;
+
+      // Fractional delay all-pass
+      const apFOut = apFrac * (lp - apFState) + apFState;
+      apFState = lp;
+      lp = apFOut;
+
+      // Stiffness dispersion all-pass
+      if (stiffness > 0) {
+        const apSOut = stiffness * (lp - apSState) + apSState;
+        apSState = lp;
+        lp = apSOut;
+      }
+
+      dl[idx] = Math.max(-2, Math.min(2, lp));
     }
     return out;
   }
 
-  for(let s=0;s<6;s++){
-    const f0=STRING_FREQS[s], decay=STRING_DECAY[s];
-    const stiff=STRING_STIFF[s], gain=STRING_GAINS[s];
-    const durSamples=Math.ceil(SR*noteDur);
-    const startSample=Math.round(s*strumGap*SR);
-    const strOut=ksExtended(f0,decay,stiff,durSamples);
-    const conv=convolve(strOut,ir);
-    const copyLen=Math.min(conv.length,totalSamples-startSample);
-    for(let i=0;i<copyLen;i++) mixBuf[startSample+i]+=conv[i]*gain;
+  for (let s = 0; s < 6; s++) {
+    const f0    = STRING_FREQS[s];
+    const t60   = STRING_T60[s];
+    const stiff = STRING_STIFF[s];
+    const gain  = STRING_GAINS[s];
+    const [durMs, loHz, hiHz] = STRING_EXC[s];
+    const nSamples = Math.ceil(SR * noteDur);
+    const startSample = Math.round(s * strumGap * SR);
+
+    const ks   = ksExtended(f0, t60, stiff, durMs, loHz, hiHz, nSamples);
+    const conv = convolve(ks, ir);
+    const copyLen = Math.min(conv.length, totalSamples - startSample);
+    for (let i = 0; i < copyLen; i++) mixBuf[startSample + i] += conv[i] * gain;
   }
   let peak=0; for(let i=0;i<mixBuf.length;i++) peak=Math.max(peak,Math.abs(mixBuf[i]));
   if(peak>0) for(let i=0;i<mixBuf.length;i++) mixBuf[i]/=peak;
