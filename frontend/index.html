@@ -367,32 +367,64 @@ function pluck(){
   const norm=freqResp.map(v=>v/anch);
   const ir=buildIR(SR,norm);
   // Standard tuning E2 A2 D3 G3 B3 E4
-  const STRING_FREQS=[82.41,110.00,146.83,196.00,246.94,329.63];
-  const STRING_DECAY=[0.9992,0.9991,0.9990,0.9988,0.9986,0.9984];
-  const strumGap=0.06, noteDur=2.2;
+  const STRING_FREQS  = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
+  const STRING_DECAY  = [0.9993, 0.9992, 0.9991, 0.9989, 0.9987, 0.9985];
+  const STRING_STIFF  = [0.0,    0.0,    0.001,  0.002,  0.004,  0.006];
+  const STRING_GAINS  = [0.90,   0.84,   0.78,   0.72,   0.66,   0.60];
+  const strumGap=0.055, noteDur=2.4;
   const totalDur=strumGap*5+noteDur;
   const totalSamples=Math.ceil(SR*totalDur);
   const mixBuf=new Float32Array(totalSamples);
+
+  function ksExtended(f0, decay, stiffness, nSamples) {
+    const periodExact = SR / f0;
+    const period = Math.floor(periodExact);
+    const frac = periodExact - period;
+    const apCoeff = (1 - frac) / (1 + frac);
+
+    // Shaped pick attack excitation
+    const attackSamples = Math.min(Math.floor(0.003 * SR), period);
+    const dl = new Float32Array(period);
+    for (let i = 0; i < attackSamples; i++) {
+      const env = Math.exp(-5 * i / attackSamples);
+      dl[i] = (Math.random() * 2 - 1) * env;
+    }
+    // Differentiate for click character
+    for (let i = attackSamples - 1; i > 0; i--) dl[i] -= dl[i-1];
+    // Low-level noise tail
+    for (let i = attackSamples; i < period; i++) dl[i] = (Math.random() - 0.5) * 0.08;
+
+    const out = new Float32Array(nSamples);
+    let apState = 0;
+    for (let i = 0; i < nSamples; i++) {
+      const idx = i % period, nx = (i + 1) % period;
+      out[i] = dl[idx];
+      // Low-pass + decay
+      let lp = decay * (dl[idx] + dl[nx]) * 0.5;
+      // All-pass fractional delay
+      const apOut = apCoeff * (lp - apState) + dl[idx];
+      apState = apOut;
+      // Stiffness dispersion
+      dl[idx] = stiffness > 0 ? stiffness * apOut + (1 - stiffness) * lp : apOut;
+    }
+    return out;
+  }
+
   for(let s=0;s<6;s++){
     const f0=STRING_FREQS[s], decay=STRING_DECAY[s];
+    const stiff=STRING_STIFF[s], gain=STRING_GAINS[s];
     const durSamples=Math.ceil(SR*noteDur);
     const startSample=Math.round(s*strumGap*SR);
-    const period=Math.round(SR/f0);
-    const dl=new Float32Array(period);
-    for(let i=0;i<period;i++) dl[i]=(Math.random()*2-1);
-    let prev=0; for(let i=0;i<period;i++){const v=dl[i]-prev*0.9;prev=dl[i];dl[i]=v;}
-    const strOut=new Float32Array(durSamples);
-    for(let i=0;i<durSamples;i++){
-      const idx=i%period,nx=(i+1)%period; strOut[i]=dl[idx];
-      dl[idx]=decay*(dl[idx]+dl[nx])*0.5;
-    }
+    const strOut=ksExtended(f0,decay,stiff,durSamples);
     const conv=convolve(strOut,ir);
-    const strGain=0.9-s*0.06;
     const copyLen=Math.min(conv.length,totalSamples-startSample);
-    for(let i=0;i<copyLen;i++) mixBuf[startSample+i]+=conv[i]*strGain;
+    for(let i=0;i<copyLen;i++) mixBuf[startSample+i]+=conv[i]*gain;
   }
   let peak=0; for(let i=0;i<mixBuf.length;i++) peak=Math.max(peak,Math.abs(mixBuf[i]));
   if(peak>0) for(let i=0;i<mixBuf.length;i++) mixBuf[i]/=peak;
+  // Gentle tanh saturation — softens digital clipping artifacts
+  const sat=1.2, satNorm=Math.tanh(sat);
+  for(let i=0;i<mixBuf.length;i++) mixBuf[i]=Math.tanh(mixBuf[i]*sat)/satNorm;
   const buf=audioCtx.createBuffer(1,totalSamples,SR);
   buf.getChannelData(0).set(mixBuf);
   const src=audioCtx.createBufferSource(); src.buffer=buf;
