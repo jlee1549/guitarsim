@@ -101,7 +101,8 @@ def ks_string_extended(
         if stiffness > 0:
             ap_out = stiffness * ap_out + (1 - stiffness) * lp
 
-        dl[idx] = ap_out
+        # Clip delay line to prevent runaway on edge-case parameters
+        dl[idx] = np.clip(ap_out, -2.0, 2.0)
 
     return out.astype(np.float32)
 
@@ -189,6 +190,7 @@ def render_strum(freq_response: np.ndarray, sr: int = SAMPLE_RATE) -> bytes:
         mix[start:end] += conv[:end - start] * gain
 
     # Normalise with soft knee to avoid hard clipping
+    mix = np.nan_to_num(mix, nan=0.0, posinf=1.0, neginf=-1.0)
     peak = np.max(np.abs(mix))
     if peak > 0:
         mix /= peak
