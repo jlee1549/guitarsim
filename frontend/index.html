@@ -362,10 +362,20 @@ function pluck(){
   const cable=+document.getElementById('ccable').value*1e-12;
   const tbleed=document.getElementById('tbleed').value;
   const wiring=getWiring(), active=getActive();
+
+  // Current response
   const freqResp=sweepSel(state.pickups,active,cable,tbleed,wiring);
   const anch=Math.max(...freqResp)||1;
   const norm=freqResp.map(v=>v/anch);
   const ir=buildIR(SR,norm);
+
+  // Reference gain: ratio of current peak to wide-open peak
+  // This makes volume knob position audible in the strum
+  const refPickups=state.pickups.map(p=>({...p,volKnob:10,toneKnob:10}));
+  const refResp=sweepSel(refPickups,active,cable,tbleed,wiring);
+  const refPeak=Math.max(...refResp)||1;
+  const curPeak=Math.max(...freqResp);
+  const referenceGain=Math.max(0.0, Math.min(1.0, curPeak/refPeak));
   // Standard tuning, T60 decay, stiffness, per-string excitation bandwidth
   const STRING_FREQS  = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
   const STRING_T60    = [8.0,   7.0,    5.5,    4.0,    3.0,    2.2];
@@ -463,6 +473,20 @@ function pluck(){
     return out;
   }
 
+  function pickClick(f0, nAtt) {
+    const out = new Float32Array(nAtt);
+    const dets = [1.0, 1.41, 2.73, 4.12, 7.0];
+    for (let k = 0; k < dets.length; k++) {
+      for (let i = 0; i < nAtt; i++) {
+        const t = i / nAtt;
+        const env = Math.exp(-t * 12) * (1 - Math.exp(-t * 200));
+        out[i] += Math.sin(2*Math.PI * f0 * dets[k] * t) * env * Math.pow(0.5, k);
+      }
+    }
+    return out;
+  }
+  const attSamples = Math.round(0.012 * SR);
+
   for (let s = 0; s < 6; s++) {
     const f0    = STRING_FREQS[s];
     const t60   = STRING_T60[s];
@@ -474,11 +498,19 @@ function pluck(){
 
     const ks   = ksExtended(f0, t60, stiff, durMs, loHz, hiHz, nSamples);
     const conv = convolve(ks, ir);
+
+    // Blend pick click — inharmonic attack transient, bypasses electronics IR
+    const click = pickClick(f0, attSamples);
+    for (let i = 0; i < Math.min(click.length, conv.length); i++) conv[i] += click[i] * 0.25;
+
     const copyLen = Math.min(conv.length, totalSamples - startSample);
     for (let i = 0; i < copyLen; i++) mixBuf[startSample + i] += conv[i] * gain;
   }
-  let peak=0; for(let i=0;i<mixBuf.length;i++) peak=Math.max(peak,Math.abs(mixBuf[i]));
-  if(peak>0) for(let i=0;i<mixBuf.length;i++) mixBuf[i]/=peak;
+  // Scale by referenceGain so volume knob is audible — no peak normalization
+  const sat = 1.5, satNorm = Math.tanh(sat);
+  for (let i = 0; i < mixBuf.length; i++) {
+    mixBuf[i] = Math.tanh(mixBuf[i] * referenceGain * sat) / satNorm;
+  }
   // Gentle tanh saturation — softens digital clipping artifacts
   const sat=1.2, satNorm=Math.tanh(sat);
   for(let i=0;i<mixBuf.length;i++) mixBuf[i]=Math.tanh(mixBuf[i]*sat)/satNorm;
