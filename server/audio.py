@@ -1,83 +1,53 @@
 """
 audio.py — guitar string synthesis via Karplus-Strong digital waveguide
 
-Excitation model: triangular string displacement (physical initial condition)
-  x[n] = n/p_idx            for 0 <= n < p_idx
-  x[n] = (N-n)/(N-p_idx)   for p_idx <= n < N
+Excitation: triangular string displacement (physical initial condition).
+  Produces 1/n^2 harmonic rolloff and pluck-point comb filter analytically.
 
-This is exactly what a guitar string looks like when held by a pick.
-It produces the correct 1/n^2 harmonic rolloff and the pluck-point
-comb filter analytically — no noise, no filtering required.
-
-KS feedback loop:
-  - Averaging LPF (x[n] + x[n-1]) / 2  -> harmonic darkening over time
-  - Per-sample decay from T60            -> correct sustain envelope
-  - Fractional delay all-pass            -> accurate pitch
-  - Stiffness all-pass                   -> inharmonicity on plain strings
-
-Single string output, shaped by electronics frequency response IR.
+KS loop:
+  - Simple per-period gain (base_decay) for correct T60 — no FIR averaging.
+    The two-point FIR y=0.5*(x+prev) runs at SAMPLE rate in original KS,
+    not PERIOD rate. Running it at period rate with frac>0 causes catastrophic
+    cancellation: gain per period = |cos(pi*frac)| << 1 for high strings.
+    E4 frac=0.79 → |cos(pi*0.79)| = 0.59 → -4.6dB per period → dead in 50ms.
+  - First-order all-pass for fractional delay (flat magnitude, correct pitch).
+  - Optional stiffness all-pass for inharmonicity.
+  - Initial FFT spectral taper for differential harmonic decay.
 """
 
-import io
-import wave
+import io, wave
 import numpy as np
 from scipy.signal import butter, sosfilt
 from simulation import FREQS
 
 SAMPLE_RATE = 44100
-NOTE_DUR_S  = 3.0   # seconds of sustain rendered
-
-# Pluck position as fraction of string from bridge end
-# 0.12 = typical pick position in normal playing
+NOTE_DUR_S  = 3.0
 DEFAULT_PLUCK_POS = 0.12
 
-# Stiffness per string number (0=low E, 5=high E)
-# Wound strings have near-zero stiffness; plain strings have more
 STRING_STIFFNESS = [0.0, 0.0, 0.0003, 0.0015, 0.003, 0.005]
 
-# Loop filter brightness: b = exp(-2π/N) where N = cutoff harmonic above fundamental.
-# This is independent of string frequency — the filter runs at the per-period rate.
-# N=20: cutoff at 20th harmonic → b ≈ 0.730 (slightly dark, wound-string character)
-# N=30: cutoff at 30th harmonic → b ≈ 0.812 (brighter, good for plain strings)
-# Real guitar: high harmonics decay faster, but the attack should be bright.
-# Wound strings: N=20 (darker), Plain strings: N=30 (brighter)
-import math as _math
-STRING_BRIGHTNESS = [
-    _math.exp(-2*_math.pi/20),   # E2 wound  → 0.730
-    _math.exp(-2*_math.pi/20),   # A2 wound  → 0.730
-    _math.exp(-2*_math.pi/22),   # D3 wound  → 0.751
-    _math.exp(-2*_math.pi/25),   # G3 plain  → 0.778
-    _math.exp(-2*_math.pi/28),   # B3 plain  → 0.798
-    _math.exp(-2*_math.pi/30),   # E4 plain  → 0.812
-]
+STRING_LOSS = [0.30, 0.28, 0.25, 0.18, 0.15, 0.12]
+STRING_BRIGHTNESS = STRING_LOSS   # alias
 
-STRING_T60 = [7.0, 6.0, 4.5, 3.2, 2.4, 1.8]
+STRING_T60 = [7.0, 6.0, 4.5, 4.0, 5.0, 6.0]
 
-# Open string frequencies: E2 A2 D3 G3 B3 E4
 OPEN_STRINGS = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63]
 STRING_NAMES = ["E2", "A2", "D3", "G3", "B3", "E4"]
 
+
 def triangular_excitation(period: int, pluck_pos: float) -> np.ndarray:
-    """
-    Physical triangular string displacement.
-    DC-removed: a symmetric triangle has zero mean only when p=0.5;
-    at other pluck positions the mean is nonzero and must be subtracted
-    or the KS loop accumulates a bias that sounds like static/rumble.
-    """
     N     = period
     p_idx = max(1, min(N - 2, round(pluck_pos * N)))
     x     = np.zeros(N)
     x[:p_idx] = np.arange(p_idx) / p_idx
     x[p_idx:] = np.arange(N - p_idx, 0, -1) / (N - p_idx)
-    x -= x.mean()          # remove DC bias
+    x -= x.mean()
     pk = np.max(np.abs(x))
-    if pk > 0:
-        x /= pk
+    if pk > 0: x /= pk
     return x.astype(np.float64)
 
 
 def _t60_to_decay(f0: float, t60: float, sr: int) -> float:
-    """Per-sample decay: 0.001^(1/(t60*f0)) — 60dB drop at fundamental in t60s."""
     return float(10.0 ** (-3.0 / (t60 * f0)))
 
 
@@ -88,93 +58,59 @@ def ks_string(
     pluck_pos: float,
     n_samples: int,
     sr: int = SAMPLE_RATE,
-    brightness: float = 0.5,
+    brightness: float = 0.5,    # API compat only, unused
+    loss_factor: float = 0.25,
 ) -> np.ndarray:
     """
-    Karplus-Strong with physical triangular excitation.
+    KS synthesis with pure gain loop (no FIR averaging at period rate).
 
-    brightness: controls the IIR lowpass smoothing factor in the feedback loop.
-      0.5 = maximum darkening (classic KS, fastest harmonic decay)
-      0.45 = brighter, closer to real guitar on plain strings
-      0.4  = very bright (thin, twangy)
-      Range [0.3, 0.5] — stays below 0.5 to avoid instability.
-
-    Uses IIR lowpass (mrahtz formulation):
-      output = b * input + (1-b) * lastOutput
-    rather than the two-point FIR average, giving a sharper, more controllable
-    rolloff characteristic. Refer: mrahtz/javascript-karplus-strong.
+    Loop per period: y = decay * x
+    Fractional delay: first-order all-pass (always flat magnitude).
+    Spectral pre-emphasis: initial delay line shaped so high harmonics
+      start slightly lower, producing realistic differential decay.
     """
     period_exact = sr / f0
-    period       = int(np.floor(period_exact))
-    frac         = period_exact - period
+    period  = max(4, int(np.floor(period_exact)))
+    frac    = period_exact - period
 
-    ap_frac = (1.0 - frac) / (1.0 + frac)
-    decay   = _t60_to_decay(f0, t60, sr)
-    b = float(np.clip(brightness, 0.1, 0.9999))
+    base_decay = 10.0 ** (-3.0 / (t60 * f0))
+    ap_frac    = (1.0 - frac) / (1.0 + frac)
 
     dl = triangular_excitation(period, pluck_pos)
 
-    ap_f_st  = 0.0
-    ap_s_st  = 0.0
-    lp_state = 0.0  # IIR filter state (lastOutput)
+    # Spectral pre-emphasis: mild initial rolloff on high harmonics
+    if loss_factor > 0 and period > 8:
+        spec = np.fft.rfft(dl, n=period)
+        fr   = np.fft.rfftfreq(period) * sr
+        n_h  = np.clip(np.round(fr / f0), 1, None)
+        taper = 1.0 / (1.0 + loss_factor * 0.3 * (n_h - 1))
+        dl = np.fft.irfft(spec * taper, n=period).astype(np.float64)
 
-    ap_f_st  = 0.0
-    ap_s_st  = 0.0
-    lp_state = 0.0   # one-pole loop filter state y[n-1]
-    write_idx = 0
+    ap_st = 0.0; stiff_st = 0.0; widx = 0
 
-    # One-pole loop filter: H(z) = g*(1-a) / (1 - a*z^{-1})
-    # Input is current delay-line sample.
-    # g = DC gain = decay (sets T60 at fundamental)
-    # a = pole position = brightness (sets cutoff; higher a = brighter)
-    # Output: y[n] = a*y[n-1] + g*(1-a)*x[n]
-    # This separates amplitude envelope (g) from tone color (a).
-    # Warm-up: run loop filter with g=1 (no decay) to settle IIR state
-    # before switching on real decay for output.
-    def _step(g: float) -> None:
-        nonlocal ap_f_st, ap_s_st, lp_state, write_idx
-        x = dl[write_idx]
-        # One-pole IIR loop filter (Jaffe & Smith 1983 formulation)
-        y = b * lp_state + g * (1.0 - b) * x
-        lp_state = y
-        # Fractional delay all-pass
-        ap_f_out = ap_frac * (y - ap_f_st) + ap_f_st
-        ap_f_st  = y
-        y = ap_f_out
-        # Stiffness dispersion all-pass
+    def step(g):
+        nonlocal ap_st, stiff_st, widx
+        y = g * dl[widx]
+        # All-pass fractional delay
+        y_ap  = ap_frac * (y - ap_st) + ap_st
+        ap_st = y; y = y_ap
         if stiffness > 0:
-            ap_s_out = stiffness * (y - ap_s_st) + ap_s_st
-            ap_s_st  = y
-            y = ap_s_out
-        dl[write_idx] = np.clip(y, -2.0, 2.0)
-        write_idx = (write_idx + 1) % period
+            s = stiffness * (y - stiff_st) + stiff_st
+            stiff_st = y; y = s
+        dl[widx] = y
+        widx = (widx + 1) % period
 
-    # Warm-up 3 periods with g=1 — settles filter state without amplitude loss
-    for _ in range(period * 3):
-        _step(1.0)
+    for _ in range(period * 3): step(1.0)   # settle all-pass state
 
     out = np.zeros(n_samples, dtype=np.float64)
     for i in range(n_samples):
-        out[i] = dl[write_idx]
-        _step(decay)
+        out[i] = dl[widx]
+        step(base_decay)
 
-    return out.astype(np.float32)
+    return np.clip(out, -2.0, 2.0).astype(np.float32)
 
-    # Warm-up: several full periods so the filter fully settles
-    # and all delay-line slots hold consistent filtered values
-    for i in range(period * 10):
-        _ks_step(i % period)
-
-    out = np.zeros(n_samples, dtype=np.float64)
-    for i in range(n_samples):
-        idx    = i % period
-        out[i] = dl[idx]
-        _ks_step(idx)
-
-    return out.astype(np.float32)
 
 def body_eq(signal: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
-    """Approximate guitar body resonance EQ."""
     nyq  = sr / 2.0
     sos1 = butter(2, [150/nyq, 210/nyq], btype='band', output='sos')
     sig  = signal + sosfilt(sos1, signal) * 0.18
@@ -186,24 +122,19 @@ def body_eq(signal: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
 
 
 def build_ir(freq_response: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
-    """Convert linear freq response (at FREQS) -> windowed zero-phase IR."""
     N         = 4096
-    fft_freqs = np.fft.rfftfreq(N, d=1.0 / sr)
-    log_min   = np.log10(FREQS[0])
-    log_max   = np.log10(FREQS[-1])
+    fft_freqs = np.fft.rfftfreq(N, d=1.0/sr)
+    log_min   = np.log10(FREQS[0]); log_max = np.log10(FREQS[-1])
     log_f     = np.log10(np.clip(fft_freqs, FREQS[0], FREQS[-1]))
     t         = np.clip((log_f - log_min) / (log_max - log_min), 0, 1)
-    indices   = t * (len(FREQS) - 1)
-    fi        = np.floor(indices).astype(int)
-    frac_     = indices - fi
-    fi        = np.clip(fi, 0, len(FREQS) - 2)
-    H         = freq_response[fi] * (1 - frac_) + freq_response[fi + 1] * frac_
-    H[fft_freqs < 30]    = 0.0
-    H[fft_freqs > 20000] = 0.0
+    idx       = t * (len(FREQS) - 1)
+    fi        = np.clip(np.floor(idx).astype(int), 0, len(FREQS)-2)
+    fr_       = idx - fi
+    H         = freq_response[fi]*(1-fr_) + freq_response[fi+1]*fr_
+    H[fft_freqs < 30] = 0.0; H[fft_freqs > 20000] = 0.0
     ir = np.fft.irfft(H, n=N).real
     pk = int(np.argmax(np.abs(ir)))
-    ir = np.roll(ir, N // 2 - pk)
-    ir *= np.hanning(N)
+    ir = np.roll(ir, N//2 - pk) * np.hanning(N)
     return ir.astype(np.float32)
 
 
@@ -214,52 +145,35 @@ def fft_convolve(signal: np.ndarray, ir: np.ndarray) -> np.ndarray:
 
 def render_pluck(
     freq_response: np.ndarray,
-    string_idx: int = 1,          # 0=E2 1=A2 2=D3 3=G3 4=B3 5=E4
+    string_idx: int = 1,
     pluck_pos: float = DEFAULT_PLUCK_POS,
-    reference_gain: float = 1.0,  # relative to wide-open, preserves vol knob
+    reference_gain: float = 1.0,
     sr: int = SAMPLE_RATE,
 ) -> bytes:
-    """
-    Synthesise a single plucked string shaped by freq_response.
-    Returns 16-bit mono WAV bytes.
-    """
-    f0         = OPEN_STRINGS[string_idx]
-    t60        = STRING_T60[string_idx]
-    stiff      = STRING_STIFFNESS[string_idx]
-    brightness = STRING_BRIGHTNESS[string_idx]
+    f0    = OPEN_STRINGS[string_idx]
+    t60   = STRING_T60[string_idx]
+    stiff = STRING_STIFFNESS[string_idx]
+    loss  = STRING_LOSS[string_idx]
 
     norm_resp = freq_response / (np.max(freq_response) + 1e-12)
     ir        = build_ir(norm_resp, sr)
-
     n_samples = int(np.ceil(sr * NOTE_DUR_S))
-    sig       = ks_string(f0, t60, stiff, pluck_pos, n_samples, sr,
-                          brightness=brightness)
 
-    # Remove DC and apply gentle high-pass (20 Hz) to kill rumble from KS bias
+    sig = ks_string(f0, t60, stiff, pluck_pos, n_samples, sr, loss_factor=loss)
+
     sig -= sig.mean()
-    sos_hp = butter(2, 20.0 / (sr / 2.0), btype='high', output='sos')
+    sos_hp = butter(2, 20.0/(sr/2.0), btype='high', output='sos')
     sig    = sosfilt(sos_hp, sig).astype(np.float32)
-
-    sig = body_eq(sig, sr)
-
-    # Final DC removal after body EQ
-    sig -= sig.mean()
+    sig    = body_eq(sig, sr)
+    sig   -= sig.mean()
 
     conv = fft_convolve(sig, ir)
-
-    conv = np.nan_to_num(conv[:n_samples], nan=0.0)
-
-    # Apply reference gain — preserves volume knob audibility
-    conv *= reference_gain
-
-    # Soft limit — no hard normalization
+    conv = np.nan_to_num(conv[:n_samples], nan=0.0) * reference_gain
     conv = np.tanh(conv * 1.5) / float(np.tanh(np.float32(1.5)))
     pcm  = (conv * 0.85 * 32767).clip(-32768, 32767).astype(np.int16)
 
     buf = io.BytesIO()
     with wave.open(buf, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        wf.writeframes(pcm.tobytes())
+        wf.setnchannels(1); wf.setsampwidth(2)
+        wf.setframerate(sr); wf.writeframes(pcm.tobytes())
     return buf.getvalue()
