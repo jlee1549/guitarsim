@@ -88,6 +88,7 @@ class GuitarSim:
                          _default_pu("bridge","humbucker")]
         for i in range(MAX_PU):
             setattr(self.state, f"pu{i}_preset", 0)
+            setattr(self.state, f"pu{i}_presets_key", "hb_presets")
         self._push_pu_state()
 
         # Chart state — plain lists, rendered by Chart.js in client.Script
@@ -103,8 +104,10 @@ class GuitarSim:
     # ── flat state helpers ────────────────────────────────────────────────
     def _push_pu_state(self):
         for i,p in enumerate(self._pu_data):
-            setattr(self.state,f"pu{i}_vol",      p["vol_pct"])     # slider: 0-100% wiper
-            setattr(self.state,f"pu{i}_tone",     p["tone_pct"])    # slider: 0-100% wiper
+            ptype = p["type"]
+            setattr(self.state,f"pu{i}_presets_key", {"humbucker":"hb_presets","single":"sc_presets","p90":"p90_presets"}.get(ptype,"hb_presets"))
+            setattr(self.state,f"pu{i}_vol",      p["vol_pct"])
+            setattr(self.state,f"pu{i}_tone",     p["tone_pct"])
             setattr(self.state,f"pu{i}_rvol",     p["Rvol"])
             setattr(self.state,f"pu{i}_rtone",    p["Rtone"])
             setattr(self.state,f"pu{i}_ctone_nf", p["Ctone_nf"])
@@ -222,6 +225,9 @@ class GuitarSim:
             setattr(self.state, f"pu{i}_preset", 0)
             setattr(self.state, f"pu{i}_vol",  100.0)
             setattr(self.state, f"pu{i}_tone", 100.0)
+            ptype = self._pu_data[i]["type"] if i < n else "humbucker"
+            setattr(self.state, f"pu{i}_presets_key",
+                    {"humbucker":"hb_presets","single":"sc_presets","p90":"p90_presets"}.get(ptype,"hb_presets"))
         self.state.master_vol = 100.0
         self.state.tone1_knob = 100.0
         self.state.tone2_knob = 100.0
@@ -472,8 +478,8 @@ document.head.appendChild(sc);
 
     def _pickup_card(self, i: int):
         p = f"pu{i}_"
-        ptype = self._pu_data[i]["type"]
-        presets_key = {"humbucker":"hb_presets","single":"sc_presets","p90":"p90_presets"}.get(ptype,"hb_presets")
+        ptype = self._pu_data[i]["type"]   # used only for initial render label
+        presets_key = f"pu{i}_presets_key"  # reactive state key — updates on layout change
         with v.VCard(variant="outlined"):
             with v.VCardText(classes="pa-3"):
                 html.Div(f"{{{{ pu_labels[{i}] }}}}",classes="text-subtitle-2 font-weight-medium mb-2",style=f"color:{COLORS[i]}")
