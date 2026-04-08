@@ -57,7 +57,7 @@ class GuitarSim:
         self.state.layout      = "HH"
         self.state.wiring      = "50s"
         self.state.ccable_pf   = 200       # typical 3m cable ~100-300pF
-        self.state.r_amp_kohm  = 500       # amp input impedance in kΩ (500kΩ typical)
+        self.state.r_amp_kohm  = 1000      # amp input impedance in kΩ (1MΩ = tube amp typical)
         self.state.scale_mm    = 628       # instrument scale length (shared)
         self.state.vol_taper   = "audio"
         self.state.tone_taper  = "audio"
@@ -378,20 +378,23 @@ class GuitarSim:
             pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             pcm = pcm / (32768.0 + 1e-9)
 
-            # Use first 0.5 s for attack spectrum, full length for decay
-            n_attack = min(len(pcm), int(sr * 0.5))
+            # Use first 80ms for attack spectrum — this is where harmonic
+            # content is richest and pickup resonance differences are largest.
+            # Longer windows include decay which homogenises all pickups.
+            n_attack = min(len(pcm), int(sr * 0.08))
             window   = np.hanning(n_attack)
             seg      = pcm[:n_attack] * window
             N        = max(n_attack, 65536)   # zero-pad for finer freq resolution
             spec     = np.abs(np.fft.rfft(seg, n=N))
             freqs_fft = np.fft.rfftfreq(N, 1.0/sr)
 
-            # Smooth with 1/6-octave bands and interpolate onto chart log axis
+            # Smooth with 1/12-octave bands — narrow enough to show pickup
+            # resonance peaks while suppressing individual harmonic spikes.
             audio_db = []
             peak_spec = np.max(spec) + 1e-12
             for fc in FREQS:
-                lo = fc / (2 ** (1/12))
-                hi = fc * (2 ** (1/12))
+                lo = fc / (2 ** (1/24))
+                hi = fc * (2 ** (1/24))
                 mask = (freqs_fft >= lo) & (freqs_fft <= hi)
                 band_val = np.mean(spec[mask]) if mask.any() else 1e-12
                 audio_db.append(float(20 * np.log10(band_val / peak_spec + 1e-12)))
