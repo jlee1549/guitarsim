@@ -75,6 +75,8 @@ class GuitarSim:
         self._pu_data = [_default_pu("neck","humbucker"),
                          _default_pu("bridge","humbucker"),
                          _default_pu("bridge","humbucker")]
+        for i in range(MAX_PU):
+            setattr(self.state, f"pu{i}_preset", 0)
         self._push_pu_state()
 
         # Chart state — plain lists, rendered by Chart.js in client.Script
@@ -155,6 +157,7 @@ class GuitarSim:
     def on_layout(self, layout, **_):
         defs = LAYOUTS[layout]; n = len(defs)
         for i,d in enumerate(defs): self._pu_data[i] = _default_pu(d["pos"],d["type"])
+        for i in range(MAX_PU): setattr(self.state, f"pu{i}_preset", 0)
         self._push_pu_state()
         self.state.n_pickups   = n
         self.state.pu_labels   = [f"{d['pos']} ({'HB' if d['type']=='humbucker' else 'P90' if d['type']=='p90' else 'SC'})" for d in defs]+[""]*(MAX_PU-n)
@@ -171,6 +174,19 @@ class GuitarSim:
                 f"pu{i}_ctone_nf",f"pu{i}_dist_mm",f"pu{i}_tbleed"]
         @self.state.change(*keys)
         def _watch(**_): self._compute_and_push()
+
+    def _make_preset_watcher(self, i):
+        @self.state.change(f"pu{i}_preset")
+        def _on_preset(**kw):
+            preset_idx = getattr(self.state, f"pu{i}_preset", 0)
+            ptype = self._pu_data[i]["type"]
+            db    = PICKUPS[ptype]
+            if 0 <= preset_idx < len(db):
+                p = db[preset_idx]
+                self._pu_data[i]["rdc"] = p["rdc"]
+                self._pu_data[i]["L"]   = p["L"]
+                self._pu_data[i]["Cp"]  = p["Cp"]
+            self._compute_and_push()
 
     def pluck(self):
         self.state.busy = True; self.state.status_msg = "rendering..."
@@ -203,7 +219,9 @@ class GuitarSim:
 
     # ── UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        for i in range(MAX_PU): self._make_pu_watcher(i)
+        for i in range(MAX_PU):
+            self._make_pu_watcher(i)
+            self._make_preset_watcher(i)
         with SinglePageLayout(self.server) as layout:
             layout.title.set_text("Guitar Electronics Simulator")
 
@@ -363,9 +381,14 @@ document.head.appendChild(sc);
 
     def _pickup_card(self, i):
         p = f"pu{i}_"
+        ptype = self._pu_data[i]["type"]
+        presets_key = {"humbucker": "hb_presets", "single": "sc_presets", "p90": "p90_presets"}.get(ptype, "hb_presets")
         with v.VCard(variant="outlined"):
             with v.VCardText(classes="pa-3"):
                 html.Div(f"{{{{ pu_labels[{i}] }}}}",classes="text-subtitle-2 font-weight-medium mb-2",style=f"color:{COLORS[i]}")
+                v.VSelect(v_model=(f"{p}preset",),items=(presets_key,),
+                          label="Model",density="compact",hide_details=True,classes="mb-3")
+                v.VDivider(classes="mb-2")
                 html.Div(f"Volume: {{{{ {p}vol.toFixed(1) }}}}",classes="text-caption text-medium-emphasis")
                 v.VSlider(v_model=(f"{p}vol",),min=0,max=10,step=0.1,hide_details=True,color="primary")
                 html.Div(f"Tone: {{{{ {p}tone.toFixed(1) }}}}",classes="text-caption text-medium-emphasis")
