@@ -27,10 +27,20 @@ DEFAULT_PLUCK_POS = 0.12
 
 STRING_STIFFNESS = [0.0, 0.0, 0.0003, 0.0015, 0.003, 0.005]
 
-STRING_LOSS = [0.30, 0.28, 0.25, 0.18, 0.15, 0.12]
+# STRING_LOSS: spectral pre-emphasis taper factor. Reduced significantly —
+# the velocity excitation already provides 1/n rolloff which is close to
+# real attack spectra. Heavy taper was making upper harmonics too dark
+# to discriminate pickup resonance differences. Keep minimal taper for
+# wound strings (E2-G3) where harmonic rolloff is steeper; near-zero for
+# plain strings (B3-E4).
+STRING_LOSS = [0.12, 0.10, 0.08, 0.05, 0.02, 0.0]
 STRING_BRIGHTNESS = STRING_LOSS   # alias
 
-STRING_T60 = [7.0, 6.0, 4.5, 4.0, 5.0, 6.0]
+# T60 per string (seconds). Increased to give upper harmonics more time
+# at attack before decaying — critical for pickup resonance discrimination.
+# Real wound nickel strings: E2~7s, A2~6s, D3~5s, G3~4s
+# Plain: B3~6s, E4~7s (plain strings actually sustain longer than wound)
+STRING_T60 = [7.0, 6.5, 5.5, 4.5, 6.0, 7.0]
 
 OPEN_STRINGS = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63]
 STRING_NAMES = ["E2", "A2", "D3", "G3", "B3", "E4"]
