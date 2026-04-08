@@ -31,6 +31,7 @@ class PickupParams:
     scale_mm: float = 628.0
     vol_taper: str = "audio"   # "linear", "audio", "custom_15", "custom_30"
     tone_taper: str = "audio"  # same options
+    tbleed: str = "none"       # per-pickup treble bleed: "none", "cap", "network"
 
 
 def apply_taper(knob: float, taper: str) -> float:
@@ -106,22 +107,21 @@ def channel_gain(
     freqs: np.ndarray,
     pu: PickupParams,
     Ccable: float,
-    tbleed: str,
     wiring: Literal["50s", "modern"],
 ) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray]:
     """
-    Compute voltage gain at output for a single pickup channel.
-    Returns (gain, Zs, Rv1, Rv2, Y_tone) for use in multi-pickup combining.
+    Compute voltage gain for a single pickup channel.
+    Treble bleed is taken from pu.tbleed (per-pickup).
+    Returns (gain, Zs, Rv1, Rv2, Y_tone) for Thévenin combining.
     """
     w = 2 * np.pi * freqs
-    Zs = pickup_source_z(freqs, pu)
-    # Volume pot: taper maps knob position to resistance fraction
+    Zs    = pickup_source_z(freqs, pu)
     alpha = apply_taper(pu.vol_knob, pu.vol_taper)
-    Rv1 = pu.Rvol * (1 - alpha)   # upper segment (series with pickup)
-    Rv2 = pu.Rvol * alpha          # lower segment (shunts to ground)
+    Rv1   = pu.Rvol * (1 - alpha)
+    Rv2   = pu.Rvol * alpha
 
-    Y_tone = tone_admittance(freqs, pu)
-    Y_bleed = bleed_admittance(freqs, tbleed)
+    Y_tone  = tone_admittance(freqs, pu)
+    Y_bleed = bleed_admittance(freqs, pu.tbleed)
     Y_cable = 1j * w * Ccable if Ccable > 0 else np.zeros_like(freqs, dtype=complex)
 
     if wiring == "50s":
@@ -150,41 +150,47 @@ def sweep(
     pickups: list[PickupParams],
     active: list[int],
     Ccable: float,
-    tbleed: str,
     wiring: str,
     include_position: bool = True,
 ) -> np.ndarray:
     """
-    Compute combined frequency response for the active pickup set.
+    Combined frequency response for the active pickup set.
+    Treble bleed is per-pickup via pu.tbleed.
+    Pickups are combined in parallel (Thévenin equivalent sources).
     Returns linear gain array at FREQS.
     """
     freqs = FREQS
 
     if len(active) == 1:
         pu = pickups[active[0]]
-        gain, *_ = channel_gain(freqs, pu, Ccable, tbleed, wiring)
+        gain, *_ = channel_gain(freqs, pu, Ccable, wiring)
         if include_position:
             gain *= position_comb(freqs, pu.dist_mm)
         return gain
 
-    # Multi-pickup: Thevenin combining
-    w = 2 * np.pi * freqs
-    Y_src = np.zeros(len(freqs), dtype=complex)
+    # Multi-pickup parallel Thévenin combination.
+    # Each pickup is a voltage source Zs+Rv1 driving the shared output node.
+    # The shunt admittances (Rv2, tone, bleed) all connect to the same node.
+    # Cable cap is a single shared load at the output.
+    w      = 2 * np.pi * freqs
+    Y_src   = np.zeros(len(freqs), dtype=complex)
     Y_shunt = np.zeros(len(freqs), dtype=complex)
 
     for idx in active:
-        pu = pickups[idx]
-        gain, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0, "none", wiring)
+        pu   = pickups[idx]
+        gain, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring)
         comb = position_comb(freqs, pu.dist_mm) if include_position else 1.0
         Z_ser = (Zs + Rv1) / np.where(comb > 0, comb, 1e-9)
-        Y_src += 1.0 / Z_ser
-        Y_shunt += (1 / Rv2 if Rv2 > 0 else 0) + Y_tone
+        Y_src   += 1.0 / Z_ser
+        Y_shunt += (1.0 / Rv2 if Rv2 > 0 else 0) + Y_tone
+        # Per-pickup treble bleed contributes to the shared shunt
+        Y_shunt += bleed_admittance(freqs, pu.tbleed)
 
-    Y_cable = 1j * w * Ccable if Ccable > 0 else np.zeros(len(freqs), dtype=complex)
-    Y_bleed = bleed_admittance(freqs, tbleed)
-    Y_shunt += Y_cable + Y_bleed
+    # Cable cap is a single shared output load
+    Y_cable  = 1j * w * Ccable if Ccable > 0 else np.zeros(len(freqs), dtype=complex)
+    Y_shunt += Y_cable
 
     Z_load = 1.0 / Y_shunt
-    Z_th = 1.0 / Y_src
+    Z_th   = 1.0 / Y_src
     result = np.abs(Z_load) / np.abs(Z_th + Z_load)
     return np.nan_to_num(result, nan=0.0)

@@ -114,12 +114,13 @@ class GuitarSim:
 
     def _make_params(self):
         self._pull_pu_state()
-        scale = self.state.scale_mm   # shared scale length
+        scale = self.state.scale_mm
         return [PickupParams(rdc=p["rdc"],L=p["L"],Cp=p["Cp"],
             Rvol=p["Rvol"],Rtone=p["Rtone"],Ctone=p["Ctone_nf"]*1e-9,
             vol_knob=p["vol_knob"],tone_knob=p["tone_knob"],
             dist_mm=p["dist_mm"],scale_mm=scale,
             vol_taper=self.state.vol_taper,tone_taper=self.state.tone_taper,
+            tbleed=p["tbleed"],
         ) for p in self._pu_data]
 
     def _compute_and_push(self):
@@ -128,18 +129,16 @@ class GuitarSim:
         active = self._active()
         pus    = self._make_params()
 
-        # Per-pickup tbleed — pass through active pickups
-        # For multi-pickup, use the first active pickup's tbleed
-        tbleed = self._pu_data[active[0]]["tbleed"] if active else "none"
-
-        cur = sweep(pus, active, cable, tbleed, self.state.wiring)
+        # Per-pickup tbleed is now on PickupParams.tbleed — no separate arg needed
+        cur = sweep(pus, active, cable, self.state.wiring)
         ref_pus = [PickupParams(rdc=p["rdc"],L=p["L"],Cp=p["Cp"],
             Rvol=p["Rvol"],Rtone=p["Rtone"],Ctone=p["Ctone_nf"]*1e-9,
             vol_knob=10.0,tone_knob=10.0,dist_mm=p["dist_mm"],
             scale_mm=self.state.scale_mm,
             vol_taper=self.state.vol_taper,tone_taper=self.state.tone_taper,
+            tbleed=p["tbleed"],
         ) for p in self._pu_data]
-        ref = sweep(ref_pus, active, cable, tbleed, self.state.wiring)
+        ref = sweep(ref_pus, active, cable, self.state.wiring)
 
         anchor = float(np.max(ref)) or 1.0
         cur_db = (20*np.log10(np.clip(cur/anchor,1e-12,None))).tolist()
@@ -179,16 +178,16 @@ class GuitarSim:
             self._pull_pu_state()
             active = self._active()
             cable  = self.state.ccable_pf * 1e-12
-            tbleed = self._pu_data[active[0]]["tbleed"] if active else "none"
             pus    = self._make_params()
-            resp   = sweep(pus, active, cable, tbleed, self.state.wiring)
+            resp   = sweep(pus, active, cable, self.state.wiring)
             ref_pus= [PickupParams(rdc=p["rdc"],L=p["L"],Cp=p["Cp"],
                 Rvol=p["Rvol"],Rtone=p["Rtone"],Ctone=p["Ctone_nf"]*1e-9,
                 vol_knob=10.0,tone_knob=10.0,dist_mm=p["dist_mm"],
                 scale_mm=self.state.scale_mm,
                 vol_taper=self.state.vol_taper,tone_taper=self.state.tone_taper,
+                tbleed=p["tbleed"],
             ) for p in self._pu_data]
-            ref    = sweep(ref_pus, active, cable, tbleed, self.state.wiring)
+            ref    = sweep(ref_pus, active, cable, self.state.wiring)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
             wav = render_pluck(resp,string_idx=int(self.state.pluck_string),
                                pluck_pos=self.state.pluck_pos/100.0,
