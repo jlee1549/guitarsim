@@ -102,6 +102,7 @@ class GuitarSim:
         self.state.chart_cur    = [0.0]*len(FREQS)
         self.state.chart_ref    = [0.0]*len(FREQS)
         self.state.chart_stats  = {"peak":0,"db200":0.0,"db500":0.0,"db1k":0.0,"db4k":0.0}
+        self.state.chart_note   = ""
 
         self._compute_and_push()
         self._build_ui()
@@ -248,6 +249,11 @@ class GuitarSim:
 
         def at(f): return round(cur_db[int(np.argmin(np.abs(FREQS-f)))],1)
         self.state.chart_stats = {"peak":round(float(FREQS[int(np.argmax(cur_db))])),"db200":at(200),"db500":at(500),"db1k":at(1000),"db4k":at(4000)}
+
+        # Note when polarity would affect response (only audible via audio render)
+        polarities = [pus[i].polarity for i in active]
+        has_rwrp = len(active) > 1 and len(set(polarities)) > 1
+        self.state.chart_note = "Polarity effect visible only in audio (requires position comb)" if has_rwrp else ""
 
     # ── reactive handlers ─────────────────────────────────────────────────
     @change("layout")
@@ -511,7 +517,11 @@ document.head.appendChild(sc);
 
                     # Stats
                     html.Div("Peak: {{ chart_stats.peak }} Hz  |  200 Hz: {{ chart_stats.db200 }} dB  500 Hz: {{ chart_stats.db500 }} dB  1 kHz: {{ chart_stats.db1k }} dB  4 kHz: {{ chart_stats.db4k }} dB",
-                             classes="text-caption text-medium-emphasis font-weight-medium mb-2")
+                             classes="text-caption text-medium-emphasis font-weight-medium mb-1")
+                    html.Div("{{ chart_note }}",
+                             classes="text-caption text-medium-emphasis font-italic mb-2",
+                             style="color: #F9A825;",
+                             v_show="chart_note")
 
                     # Chart
                     with v.VCard(variant="outlined"):
