@@ -231,8 +231,13 @@ class GuitarSim:
         r_amp  = self.state.r_amp_kohm * 1e3
         active = self._active()
         pus    = self._make_params()
-        cur    = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp)
-        ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp)
+        # Chart shows electronics-only response without position comb.
+        # The string-position comb is note/string-dependent and belongs only
+        # in the audio render, not on a frequency response reference chart.
+        # RWRP combinations will show near-cancellation — this is correct;
+        # the quack comes from the comb breaking that cancellation selectively.
+        cur    = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp, include_position=False)
+        ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp, include_position=False)
 
         anchor = float(np.max(ref)) or 1.0
         cur_db = (20*np.log10(np.clip(cur/anchor,1e-12,None))).tolist()

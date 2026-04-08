@@ -101,42 +101,53 @@ PICKUPS = {
     ],
 
     "single": [
-        # ── Stratocaster ──────────────────────────────────────────────────
-        # Vintage spec: neck ~5.8kΩ / ~2.2H, bridge ~6.4kΩ / ~2.5H
-        {"name": "Strat neck (vintage A5, ~6.5kHz)",
-         "rdc": 5800,  "L": 2.2,  "Cp": 60e-12},
-        {"name": "Strat middle (RWRP)",
-         "rdc": 5900,  "L": 2.3,  "Cp": 60e-12},
-        {"name": "Strat bridge (vintage A5)",
-         "rdc": 6400,  "L": 2.5,  "Cp": 65e-12},
-
-        # SD SSL-1 vintage: ~5.8kΩ, A5
-        {"name": "SSL-1 Vintage Strat (A5)",
-         "rdc": 5800,  "L": 2.2,  "Cp": 62e-12},
-
-        # Overwound / hot single (e.g. SD SSL-5 Custom): ~12.9kΩ
-        {"name": "Hot Strat bridge (Custom, A5)",
+        # ── Stratocaster — measured values (GuitarFreak / Bedlam) ─────────
+        # Texas Special: measured R=6340Ω, L=2.55H, Cp=160pF (GuitarFreak)
+        {"name": "Texas Special (measured, A5)",
+         "rdc": 6340,  "L": 2.55, "Cp": 160e-12},
+        # Fender CS69: measured R=5450Ω, L=2.30H, Cp=140pF
+        {"name": "CS '69 (measured, A5)",
+         "rdc": 5450,  "L": 2.30, "Cp": 140e-12},
+        # Fender 57/62: measured R=7082Ω, L=2.97H, Cp=96pF
+        {"name": "Fender '57/'62 (measured, A5)",
+         "rdc": 7082,  "L": 2.97, "Cp": 96e-12},
+        # SD SSL-1: measured R=6620Ω, L=3.16H, Cp=100pF
+        {"name": "SSL-1 Vintage (measured, A5)",
+         "rdc": 6620,  "L": 3.16, "Cp": 100e-12},
+        # Fender VN (Vintage Noiseless): measured R=10400Ω, L=2.86H, Cp=38pF
+        # Very low Cp — gives a bright, extended high-frequency response
+        {"name": "Vintage Noiseless (measured, A5)",
+         "rdc": 10400, "L": 2.86, "Cp": 38e-12},
+        # Suhr V60 LP: measured R=6471Ω, L=3.00H, Cp=229pF (high Cp — darker)
+        {"name": "Suhr V60 LP (measured, A5)",
+         "rdc": 6471,  "L": 3.00, "Cp": 229e-12},
+        # Lollar Blackface: measured R=7664Ω, L=3.57H, Cp=81pF
+        {"name": "Lollar Blackface (measured, A5)",
+         "rdc": 7664,  "L": 3.57, "Cp": 81e-12},
+        # GFS Blues: measured R=6241Ω, L=2.44H, Cp=83pF
+        {"name": "GFS Blues (measured, A5)",
+         "rdc": 6241,  "L": 2.44, "Cp": 83e-12},
+        # Tonerider Surfari: measured R=6557Ω, L=2.92H, Cp=102pF
+        {"name": "Tonerider Surfari (measured, A5)",
+         "rdc": 6557,  "L": 2.92, "Cp": 102e-12},
+        # Generic hot single (e.g. SSL-5 style): ~12.9kΩ
+        {"name": "Hot Strat bridge (overwound, A5)",
          "rdc": 12900, "L": 4.8,  "Cp": 85e-12},
 
-        # Texas Special / Blues style: moderate output, warm
-        {"name": "Texas Special neck (A5, warm)",
-         "rdc": 7200,  "L": 2.8,  "Cp": 70e-12},
-
-        # DiMarzio Area 58 noiseless: ~5.02kHz resonant peak
-        {"name": "Noiseless (Area-style, 5kHz peak)",
-         "rdc": 8500,  "L": 3.2,  "Cp": 80e-12},
-
-        # ── Telecaster ───────────────────────────────────────────────────
-        # Tele neck: higher inductance due to cover/steel baseplate effect
-        {"name": "Tele neck (with steel baseplate, ~4.5H)",
+        # ── Telecaster — measured ──────────────────────────────────────────
+        # Fender MIJ Tele: measured R=6750Ω, L=2.00H, Cp=240pF
+        # High Cp from metal baseplate proximity — darker than Strat SC
+        {"name": "MIJ Tele bridge (measured, A5)",
+         "rdc": 6750,  "L": 2.00, "Cp": 240e-12},
+        # Fender MIM Ceram: measured R=7437Ω, L=4.12H, Cp=196pF
+        {"name": "MIM Tele neck (measured, ceramic)",
+         "rdc": 7437,  "L": 4.12, "Cp": 196e-12},
+        # Generic Tele neck with steel baseplate (adds ~2H effective inductance)
+        {"name": "Tele neck (steel baseplate, generic)",
          "rdc": 7200,  "L": 4.5,  "Cp": 75e-12},
-        {"name": "Tele bridge (brass baseplate)",
-         "rdc": 7800,  "L": 3.0,  "Cp": 72e-12},
-        {"name": "Tele bridge (hot, A5)",
-         "rdc": 9500,  "L": 3.8,  "Cp": 80e-12},
 
-        # ── Lipstick / specialty ─────────────────────────────────────────
-        # SD SLS-1 Lipstick: 4.3kΩ, 9.4kHz resonant peak → L≈2.5H at 55pF
+        # ── Lipstick ──────────────────────────────────────────────────────
+        # SD SLS-1 Lipstick: 4.3kΩ, resonant ~9.4kHz → L≈2.5H at 55pF
         {"name": "Lipstick tube (A5, 9.4kHz peak)",
          "rdc": 4300,  "L": 2.5,  "Cp": 55e-12},
     ],
