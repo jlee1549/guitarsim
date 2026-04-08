@@ -51,6 +51,7 @@ class GuitarSim:
         self.state.layout      = "HH"
         self.state.wiring      = "50s"
         self.state.ccable_pf   = 200       # typical 3m cable ~100-300pF
+        self.state.r_amp_kohm  = 500       # amp input impedance in kΩ (500kΩ typical)
         self.state.scale_mm    = 628       # instrument scale length (shared)
         self.state.vol_taper   = "audio"
         self.state.tone_taper  = "audio"
@@ -166,10 +167,11 @@ class GuitarSim:
     def _compute_and_push(self):
         self._pull_pu_state()
         cable  = self.state.ccable_pf * 1e-12
+        r_amp  = self.state.r_amp_kohm * 1e3
         active = self._active()
         pus    = self._make_params()
-        cur    = sweep(pus, active, cable, self.state.wiring)
-        ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring)
+        cur    = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp)
+        ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp)
 
         anchor = float(np.max(ref)) or 1.0
         cur_db = (20*np.log10(np.clip(cur/anchor,1e-12,None))).tolist()
@@ -213,7 +215,7 @@ class GuitarSim:
         self.state.toggle_idx  = next((i for i,t in enumerate(self.state.tog_options) if len(t["active"])==n),0)
         self._compute_and_push()
 
-    @change("wiring","ccable_pf","toggle_idx","scale_mm","vol_taper","tone_taper",
+    @change("wiring","ccable_pf","r_amp_kohm","toggle_idx","scale_mm","vol_taper","tone_taper",
             "master_vol","tone1_knob","tone2_knob")
     def on_shared(self, **_):
         self._compute_and_push()
@@ -246,9 +248,10 @@ class GuitarSim:
             self._pull_pu_state()
             active = self._active()
             cable  = self.state.ccable_pf * 1e-12
+            r_amp  = self.state.r_amp_kohm * 1e3
             pus    = self._make_params()
-            resp   = sweep(pus, active, cable, self.state.wiring)
-            ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring)
+            resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp)
+            ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
             wav = render_pluck(resp,string_idx=int(self.state.pluck_string),
                                pluck_pos=self.state.pluck_pos/100.0,
@@ -392,7 +395,9 @@ document.head.appendChild(sc);
                                     html.Div("Scale length: {{ scale_mm }} mm",classes="text-caption text-medium-emphasis")
                                     v.VSlider(v_model=("scale_mm",),min=580,max=710,step=1,hide_details=True,classes="mb-2")
                                     html.Div("Cable cap: {{ ccable_pf }} pF",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("ccable_pf",),min=0,max=2000,step=50,hide_details=True)
+                                    v.VSlider(v_model=("ccable_pf",),min=0,max=2000,step=50,hide_details=True,classes="mb-2")
+                                    html.Div("Amp input: {{ r_amp_kohm }} kΩ",classes="text-caption text-medium-emphasis")
+                                    v.VSlider(v_model=("r_amp_kohm",),min=100,max=2000,step=100,hide_details=True)
                         with v.VCol(cols=12,sm=6,md=4):
                             with v.VCard(variant="outlined"):
                                 with v.VCardText():

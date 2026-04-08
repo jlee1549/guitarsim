@@ -102,8 +102,12 @@ def channel_gain(
     pu: PickupParams,
     Ccable: float,
     wiring: Literal["50s", "modern"],
+    R_amp: float = 1e6,
 ) -> tuple:
-    """Single pickup channel gain + Thévenin components."""
+    """Single pickup channel gain + Thévenin components.
+    R_amp: amp input impedance (Ohms). Added as parallel shunt at the output node.
+    Default 1MΩ is typical for a tube amp input.
+    """
     w      = 2 * np.pi * freqs
     Zs     = pickup_source_z(freqs, pu)
     alpha  = apply_taper(pu.vol_knob, pu.vol_taper)
@@ -113,9 +117,10 @@ def channel_gain(
     Y_tone  = tone_admittance(freqs, pu)
     Y_bleed = bleed_admittance(freqs, pu.tbleed)
     Y_cable = 1j * w * Ccable if Ccable > 0 else np.zeros_like(freqs, dtype=complex)
+    Y_amp   = np.full(len(freqs), 1.0 / R_amp, dtype=complex)
 
     if wiring == "50s":
-        Y_shunt  = (1/Rv2 if Rv2 > 0 else 0) + Y_tone + Y_cable + Y_bleed
+        Y_shunt  = (1/Rv2 if Rv2 > 0 else 0) + Y_tone + Y_cable + Y_bleed + Y_amp
         Z_load   = 1.0 / Y_shunt
         Z_denom  = Zs + Rv1 + Z_load
         gain     = np.abs(Z_load) / np.abs(Z_denom)
@@ -125,7 +130,7 @@ def channel_gain(
         Z_input  = 1.0 / Y_input
         v1       = np.abs(Z_input) / np.abs(Zs + Z_input)
         Z_th     = 1.0 / (1.0/Zs + 1.0/Z_input)
-        Y_load2  = (1/Rv2 if Rv2 > 0 else 0) + Y_cable
+        Y_load2  = (1/Rv2 if Rv2 > 0 else 0) + Y_cable + Y_amp
         Z_load2  = 1.0 / Y_load2
         gain     = v1 * np.abs(Z_load2) / np.abs(Z_th + Rv1 + Z_load2)
 
@@ -138,6 +143,7 @@ def sweep(
     Ccable: float,
     wiring: str,
     include_position: bool = True,
+    R_amp: float = 1e6,
 ) -> np.ndarray:
     """
     Combined frequency response for active pickups (parallel Thévenin combination).
@@ -160,7 +166,7 @@ def sweep(
 
     if len(active) == 1:
         pu   = pickups[active[0]]
-        gain, *_ = channel_gain(freqs, pu, Ccable, wiring)
+        gain, *_ = channel_gain(freqs, pu, Ccable, wiring, R_amp)
         if include_position:
             gain *= position_comb(freqs, pu.dist_mm)
         return gain
@@ -172,7 +178,7 @@ def sweep(
 
     for idx in active:
         pu   = pickups[idx]
-        _, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring)
+        _, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring, 1e99)
         comb = position_comb(freqs, pu.dist_mm) if include_position else 1.0
         Z_ser = (Zs + Rv1) / np.where(comb > 0, comb, 1e-9)
         Y_src   += 1.0 / Z_ser
@@ -180,7 +186,8 @@ def sweep(
         Y_shunt += bleed_admittance(freqs, pu.tbleed)
 
     Y_cable  = 1j * w * Ccable if Ccable > 0 else np.zeros(len(freqs), dtype=complex)
-    Y_shunt += Y_cable
+    Y_amp    = np.full(len(freqs), 1.0 / R_amp, dtype=complex)
+    Y_shunt += Y_cable + Y_amp
 
     Z_load = 1.0 / Y_shunt
     Z_th   = 1.0 / Y_src
