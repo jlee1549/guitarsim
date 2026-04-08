@@ -186,12 +186,14 @@ class GuitarSim:
         return params
 
     def _make_ref_params(self):
-        """Same topology as _make_params() but all knobs at 10 (wide-open reference)."""
+        """Same topology as _make_params() but all pots wide open (reference curve)."""
         base = self._make_params()
         result = []
         for p in base:
             import dataclasses
-            result.append(dataclasses.replace(p, vol_knob=10.0, tone_knob=10.0))
+            result.append(dataclasses.replace(p,
+                vol_knob=10.0, tone_knob=10.0,
+                vol_alpha=1.0, tone_alpha=1.0))
         return result
 
     def _compute_and_push(self):
@@ -221,17 +223,17 @@ class GuitarSim:
         n     = len(defs)
         tmap  = defn["tone_map"]
         for i, d in enumerate(defs):
-            has_tone = (tmap[i] is not None)
             self._pu_data[i] = _default_pu(d["pos"], d["type"])
-            self._pu_data[i]["has_tone"] = has_tone
+            self._pu_data[i]["has_tone"] = (tmap[i] is not None)
+        # Reset all knob state to wide-open
         for i in range(MAX_PU):
             setattr(self.state, f"pu{i}_preset", 0)
-            setattr(self.state, f"pu{i}_vol",  100.0)
-            setattr(self.state, f"pu{i}_tone", 100.0)
-        self.state.master_vol = 100.0
-        self.state.tone1_knob = 100.0
-        self.state.tone2_knob = 100.0
-        self._push_pu_state()
+            setattr(self.state, f"pu{i}_vol",   100.0)
+            setattr(self.state, f"pu{i}_tone",  100.0)
+        self.state.master_vol  = 100.0
+        self.state.tone1_knob  = 100.0
+        self.state.tone2_knob  = 100.0
+        # Update topology state
         self.state.shared_vol  = defn["shared_vol"]
         self.state.tone_map    = [t or "" for t in tmap] + [""] * (MAX_PU - n)
         self.state.n_pickups   = n
@@ -242,12 +244,8 @@ class GuitarSim:
         self.state.tog_options = _toggle_options(n)
         self.state.toggle_idx  = next(
             (i for i,t in enumerate(self.state.tog_options) if len(t["active"]) == n), 0)
-        self._compute_and_push()
+        # Push pickup data (presets list, rvol, etc.) and recompute
         self._push_pu_state()
-        self.state.n_pickups   = n
-        self.state.pu_labels   = [f"{d['pos']} ({'HB' if d['type']=='humbucker' else 'P90' if d['type']=='p90' else 'SC'})" for d in defs]+[""]*(MAX_PU-n)
-        self.state.tog_options = _toggle_options(n)
-        self.state.toggle_idx  = next((i for i,t in enumerate(self.state.tog_options) if len(t["active"])==n),0)
         self._compute_and_push()
 
     @change("wiring","ccable_pf","r_amp_kohm","toggle_idx","scale_mm","vol_taper","tone_taper",
