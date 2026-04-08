@@ -87,9 +87,9 @@ class GuitarSim:
                          _default_pu("bridge","humbucker"),
                          _default_pu("bridge","humbucker")]
         for i in range(MAX_PU):
-            setattr(self.state, f"pu{i}_preset", 0)
-            setattr(self.state, f"pu{i}_presets_key", "hb_presets")
-        self._push_pu_state()
+            setattr(self.state, f"pu{i}_preset",  0)
+            setattr(self.state, f"pu{i}_presets", [{"title":"loading...","value":0}])
+        self._push_pu_state()  # overwrites pu{i}_presets with the real list
 
         # Chart state — plain lists, rendered by Chart.js in client.Script
         self._freqs = [round(f,1) for f in FREQS.tolist()]
@@ -105,7 +105,10 @@ class GuitarSim:
     def _push_pu_state(self):
         for i,p in enumerate(self._pu_data):
             ptype = p["type"]
-            setattr(self.state,f"pu{i}_presets_key", {"humbucker":"hb_presets","single":"sc_presets","p90":"p90_presets"}.get(ptype,"hb_presets"))
+            presets_list = {"humbucker": self.state.hb_presets,
+                            "single":    self.state.sc_presets,
+                            "p90":       self.state.p90_presets}.get(ptype, self.state.hb_presets)
+            setattr(self.state,f"pu{i}_presets",  presets_list)
             setattr(self.state,f"pu{i}_vol",      p["vol_pct"])
             setattr(self.state,f"pu{i}_tone",     p["tone_pct"])
             setattr(self.state,f"pu{i}_rvol",     p["Rvol"])
@@ -225,9 +228,6 @@ class GuitarSim:
             setattr(self.state, f"pu{i}_preset", 0)
             setattr(self.state, f"pu{i}_vol",  100.0)
             setattr(self.state, f"pu{i}_tone", 100.0)
-            ptype = self._pu_data[i]["type"] if i < n else "humbucker"
-            setattr(self.state, f"pu{i}_presets_key",
-                    {"humbucker":"hb_presets","single":"sc_presets","p90":"p90_presets"}.get(ptype,"hb_presets"))
         self.state.master_vol = 100.0
         self.state.tone1_knob = 100.0
         self.state.tone2_knob = 100.0
@@ -478,12 +478,11 @@ document.head.appendChild(sc);
 
     def _pickup_card(self, i: int):
         p = f"pu{i}_"
-        ptype = self._pu_data[i]["type"]   # used only for initial render label
-        presets_key = f"pu{i}_presets_key"  # reactive state key — updates on layout change
+        ptype = self._pu_data[i]["type"]   # initial type, for reference only
         with v.VCard(variant="outlined"):
             with v.VCardText(classes="pa-3"):
                 html.Div(f"{{{{ pu_labels[{i}] }}}}",classes="text-subtitle-2 font-weight-medium mb-2",style=f"color:{COLORS[i]}")
-                v.VSelect(v_model=(f"{p}preset",),items=(presets_key,),
+                v.VSelect(v_model=(f"{p}preset",),items=(f"{p}presets",),
                           label="Model",density="compact",hide_details=True,classes="mb-3")
                 v.VDivider(classes="mb-2")
                 with html.Div(v_show="!shared_vol"):
