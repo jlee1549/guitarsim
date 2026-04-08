@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """
 pickup_db.py — pickup electrical parameter database
 

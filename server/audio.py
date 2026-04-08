@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """
 audio.py — guitar string synthesis via Karplus-Strong digital waveguide
 

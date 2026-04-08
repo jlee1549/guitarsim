@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """
 Taper inversion utilities.
 Convert between knob position (0-10) and perceptually-linear slider values.

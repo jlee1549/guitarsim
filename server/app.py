@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 """
 app.py — Guitar Electronics Simulator (trame)
 
