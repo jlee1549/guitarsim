@@ -103,6 +103,7 @@ class GuitarSim:
         self.state.chart_freqs  = self._freqs
         self.state.chart_cur    = [0.0]*len(FREQS)
         self.state.chart_ref    = [0.0]*len(FREQS)
+        self.state.chart_audio  = []
         self.state.chart_stats  = {"peak":0,"db200":0.0,"db500":0.0,"db1k":0.0,"db4k":0.0}
         self.state.chart_note   = ""
 
@@ -262,8 +263,9 @@ class GuitarSim:
         cur_db = (20*np.log10(np.clip(cur/anchor,1e-12,None))).tolist()
         ref_db = (20*np.log10(np.clip(ref/anchor,1e-12,None))).tolist()
 
-        self.state.chart_cur = cur_db
-        self.state.chart_ref = ref_db
+        self.state.chart_cur   = cur_db
+        self.state.chart_ref   = ref_db
+        self.state.chart_audio = []   # clear audio FR when electronics change
 
         def at(f): return round(cur_db[int(np.argmin(np.abs(FREQS-f)))],1)
         self.state.chart_stats = {"peak":round(float(FREQS[int(np.argmax(cur_db))])),"db200":at(200),"db500":at(500),"db1k":at(1000),"db4k":at(4000)}
@@ -353,16 +355,52 @@ class GuitarSim:
             r_amp  = self.state.r_amp_kohm * 1e3
             pus    = self._make_params()
             si     = int(self.state.pluck_string)
-            f0     = OPEN_STRINGS[si]      # per-string comb velocity
+            f0     = OPEN_STRINGS[si]
             resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
-            wav = render_pluck(resp,string_idx=si,
+            wav = render_pluck(resp, string_idx=si,
                                pluck_pos=self.state.pluck_pos/100.0,
                                reference_gain=ref_gain)
-            self.state.audio_b64  = base64.b64encode(wav).decode()
+            self.state.audio_b64   = base64.b64encode(wav).decode()
             self.state.audio_token = (self.state.audio_token or 0) + 1
-            self.state.status_msg = f"plucked {STRING_NAMES[int(self.state.pluck_string)]}"
+            self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
+
+            # Compute audio frequency response from the rendered WAV.
+            # Parse 16-bit PCM (skip 44-byte WAV header), FFT the first ~0.5s
+            # (attack transient captures the full harmonic spectrum), map onto
+            # the same log-frequency axis as the electronics chart, and push
+            # as chart_audio so the chart can show a third overlay line.
+            import struct, io, wave as wavemod
+            with wavemod.open(io.BytesIO(wav)) as wf:
+                sr  = wf.getframerate()
+                raw = wf.readframes(wf.getnframes())
+            pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+            pcm = pcm / (32768.0 + 1e-9)
+
+            # Use first 0.5 s for attack spectrum, full length for decay
+            n_attack = min(len(pcm), int(sr * 0.5))
+            window   = np.hanning(n_attack)
+            seg      = pcm[:n_attack] * window
+            N        = max(n_attack, 65536)   # zero-pad for finer freq resolution
+            spec     = np.abs(np.fft.rfft(seg, n=N))
+            freqs_fft = np.fft.rfftfreq(N, 1.0/sr)
+
+            # Smooth with 1/6-octave bands and interpolate onto chart log axis
+            audio_db = []
+            peak_spec = np.max(spec) + 1e-12
+            for fc in FREQS:
+                lo = fc / (2 ** (1/12))
+                hi = fc * (2 ** (1/12))
+                mask = (freqs_fft >= lo) & (freqs_fft <= hi)
+                band_val = np.mean(spec[mask]) if mask.any() else 1e-12
+                audio_db.append(float(20 * np.log10(band_val / peak_spec + 1e-12)))
+
+            # Normalise so peak = 0 dB (matching chart_cur convention)
+            peak_db = max(audio_db)
+            audio_db = [round(v - peak_db, 2) for v in audio_db]
+            self.state.chart_audio = audio_db
+
         except Exception as e:
             self.state.status_msg = f"error: {e}"
             import traceback; traceback.print_exc()
@@ -416,8 +454,9 @@ function initChart(){
   _chart=new Chart(canvas,{
     type:'line',
     data:{datasets:[
-      {label:'current',data:[],borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3},
-      {label:'ref (knobs@10)',data:[],borderColor:'#888',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,3]}
+      {label:'electronics',data:[],borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3},
+      {label:'ref (open)',data:[],borderColor:'#888',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,3]},
+      {label:'audio FR',data:[],borderColor:'#E8A838',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[3,3],hidden:false}
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:20,font:{size:11}}},
@@ -432,13 +471,19 @@ function initChart(){
     }
   });
 }
-function updateChart(freqs,cur,ref){
+function updateChart(freqs,cur,ref,audio){
   if(!_chart) return;
   var allVals=cur.concat(ref).filter(isFinite);
+  if(audio&&audio.length) allVals=allVals.concat(audio.filter(isFinite));
   var yMin=Math.floor((Math.min.apply(null,allVals)-3)/5)*5;
   var yMax=Math.ceil((Math.max.apply(null,allVals)+2)/5)*5;
   _chart.data.datasets[0].data=freqs.map(function(f,i){return{x:f,y:cur[i]};});
   _chart.data.datasets[1].data=freqs.map(function(f,i){return{x:f,y:ref[i]};});
+  if(audio&&audio.length){
+    _chart.data.datasets[2].data=freqs.map(function(f,i){return{x:f,y:audio[i]};});
+  } else {
+    _chart.data.datasets[2].data=[];
+  }
   _chart.options.scales.y.min=yMin; _chart.options.scales.y.max=yMax;
   _chart.update('none');
 }
@@ -449,7 +494,7 @@ function poll(){
     var s=window.trame&&window.trame.state&&window.trame.state.state;
     if(s){
       // Chart
-      if(s.chart_cur&&s.chart_freqs) updateChart(s.chart_freqs,s.chart_cur,s.chart_ref||[]);
+      if(s.chart_cur&&s.chart_freqs) updateChart(s.chart_freqs,s.chart_cur,s.chart_ref||[],s.chart_audio||[]);
       // Audio — only play when token changes
       var tok=s.audio_token||0;
       if(tok!==_lastToken&&tok>0&&s.audio_b64){
