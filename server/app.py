@@ -66,10 +66,10 @@ class GuitarSim:
         self.state.audio_b64   = ""
         self.state.audio_token = 0   # increments each pluck so JS detects new audio
 
-        # Preset lists
-        self.state.hb_presets  = [p["name"] for p in PICKUPS["humbucker"]]
-        self.state.sc_presets  = [p["name"] for p in PICKUPS["single"]]
-        self.state.p90_presets = [p["name"] for p in PICKUPS["p90"]]
+        # Preset lists — value is index so trame state gets an int, not a string
+        self.state.hb_presets  = [{"title": p["name"], "value": i} for i,p in enumerate(PICKUPS["humbucker"])]
+        self.state.sc_presets  = [{"title": p["name"], "value": i} for i,p in enumerate(PICKUPS["single"])]
+        self.state.p90_presets = [{"title": p["name"], "value": i} for i,p in enumerate(PICKUPS["p90"])]
 
         # Flat pickup state
         self._pu_data = [_default_pu("neck","humbucker"),
@@ -178,7 +178,10 @@ class GuitarSim:
     def _make_preset_watcher(self, i):
         @self.state.change(f"pu{i}_preset")
         def _on_preset(**kw):
-            preset_idx = getattr(self.state, f"pu{i}_preset", 0)
+            try:
+                preset_idx = int(getattr(self.state, f"pu{i}_preset", 0))
+            except (TypeError, ValueError):
+                return
             ptype = self._pu_data[i]["type"]
             db    = PICKUPS[ptype]
             if 0 <= preset_idx < len(db):
