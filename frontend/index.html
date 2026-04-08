@@ -75,9 +75,9 @@ input[type=number] { font-size:12px; width:100%; padding:3px 6px; border:0.5px s
   <div class="card">
     <div class="sub">cable capacitance</div>
     <div class="ctrl">
-      <input type="range" id="ccable" min="0" max="2000" step="50" value="500"
+      <input type="range" id="ccable" min="0" max="2000" step="50" value="200"
         oninput="document.getElementById('ccableVal').textContent=this.value+' pF';updateAll(true)">
-      <span class="val" id="ccableVal">500 pF</span>
+      <span class="val" id="ccableVal">200 pF</span>
     </div>
     <div class="sub" style="margin-top:8px;">treble bleed</div>
     <select id="tbleed" onchange="updateAll(true)">
@@ -425,7 +425,7 @@ function pluck(){
   const STRING_STIFF      = [0.0,   0.0,    0.0003, 0.0015, 0.003,  0.005];
   // IIR brightness: higher = brighter (more harmonics preserved).
   // mrahtz convention: y[n] = b*x[n] + (1-b)*y[n-1]
-  const STRING_BRIGHTNESS = [0.50,  0.55,   0.60,   0.65,   0.70,   0.75];
+  const STRING_BRIGHTNESS = [0.9980, 0.9982, 0.9984, 0.9987, 0.9990, 0.9993];
 
   const strIdx   = +document.getElementById('pluck_string').value;
   const pluckPct = +document.getElementById('pluck_pos').value / 100;

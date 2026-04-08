@@ -35,11 +35,22 @@ DEFAULT_PLUCK_POS = 0.12
 # Wound strings have near-zero stiffness; plain strings have more
 STRING_STIFFNESS = [0.0, 0.0, 0.0003, 0.0015, 0.003, 0.005]
 
-# IIR lowpass brightness per string — must increase with pitch.
-# At low b, high-frequency strings get too dark because the filter
-# runs proportionally more times per second (f0 passes/sec).
-# Values tuned so H2/H4 ratios are consistent across the register.
-STRING_BRIGHTNESS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]
+# Loop filter brightness: b = exp(-2π/N) where N = cutoff harmonic above fundamental.
+# This is independent of string frequency — the filter runs at the per-period rate.
+# N=20: cutoff at 20th harmonic → b ≈ 0.730 (slightly dark, wound-string character)
+# N=30: cutoff at 30th harmonic → b ≈ 0.812 (brighter, good for plain strings)
+# Real guitar: high harmonics decay faster, but the attack should be bright.
+# Wound strings: N=20 (darker), Plain strings: N=30 (brighter)
+import math as _math
+STRING_BRIGHTNESS = [
+    _math.exp(-2*_math.pi/20),   # E2 wound  → 0.730
+    _math.exp(-2*_math.pi/20),   # A2 wound  → 0.730
+    _math.exp(-2*_math.pi/22),   # D3 wound  → 0.751
+    _math.exp(-2*_math.pi/25),   # G3 plain  → 0.778
+    _math.exp(-2*_math.pi/28),   # B3 plain  → 0.798
+    _math.exp(-2*_math.pi/30),   # E4 plain  → 0.812
+]
+
 STRING_T60 = [7.0, 6.0, 4.5, 3.2, 2.4, 1.8]
 
 # Open string frequencies: E2 A2 D3 G3 B3 E4
@@ -99,7 +110,7 @@ def ks_string(
 
     ap_frac = (1.0 - frac) / (1.0 + frac)
     decay   = _t60_to_decay(f0, t60, sr)
-    b       = float(np.clip(brightness, 0.3, 0.5))  # IIR smoothing factor
+    b = float(np.clip(brightness, 0.1, 0.9999))
 
     dl = triangular_excitation(period, pluck_pos)
 
