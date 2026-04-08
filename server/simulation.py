@@ -96,21 +96,19 @@ def bleed_admittance(freqs: np.ndarray, mode: str) -> np.ndarray:
 
 def position_comb(freqs: np.ndarray, dist_mm: float, scale_mm: float = 628.0, f0: float = 0.0) -> np.ndarray:
     """
-    Pickup position comb filter: |sin(pi * f * 2 * d / v)|
+    Pickup position comb filter: sin(pi * f * 2 * d / v)
 
-    Wave velocity v = 2 * scale * f0 (per string, from wave equation).
-    If f0 is not given, falls back to a fixed 200 m/s approximation.
-    For the full frequency sweep we use each string's f0 for the KS render,
-    but for the electronics frequency response chart we need a representative
-    velocity — use the geometric mean across strings (~200 m/s is close to D3).
+    Returns COMPLEX values (with sign/phase) so that two pickups in parallel
+    combine with the correct phase relationship — this produces the characteristic
+    Strat quack in positions 2 and 4 from out-of-phase cancellation between
+    the neck and middle (or middle and bridge) pickups.
+
+    Wave velocity v = 2 * scale * f0 (per string). Falls back to STRING_WAVE_VELOCITY.
     """
     d = dist_mm / 1000.0
-    if f0 > 0:
-        v = 2.0 * (scale_mm / 1000.0) * f0
-    else:
-        v = STRING_WAVE_VELOCITY   # fallback for chart display
+    v = 2.0 * (scale_mm / 1000.0) * f0 if f0 > 0 else STRING_WAVE_VELOCITY
     arg = np.pi * freqs * 2 * d / v
-    return np.abs(np.sin(arg))
+    return np.sin(arg).astype(complex)   # complex, preserves sign/phase
 
 
 def channel_gain(
@@ -187,28 +185,31 @@ def sweep(
         pu   = pickups[active[0]]
         gain, *_ = channel_gain(freqs, pu, Ccable, wiring, R_amp)
         if include_position:
-            gain *= position_comb(freqs, pu.dist_mm, pu.scale_mm, f0)
+            gain *= np.abs(position_comb(freqs, pu.dist_mm, pu.scale_mm, f0))
         return gain
 
-    # Parallel Thévenin combination
-    w       = 2 * np.pi * freqs
-    Y_src   = np.zeros(len(freqs), dtype=complex)
-    Y_shunt = np.zeros(len(freqs), dtype=complex)
+    # Parallel combination with correct phase from position combs.
+    # Each pickup's voltage contribution is: gain_i * comb_i (complex phasor).
+    # The output is the magnitude of the sum of phasor contributions.
+    # This correctly models quack: neck+mid positions have out-of-phase
+    # contributions at frequencies where the combs have opposite signs.
+    w        = 2 * np.pi * freqs
+    V_sum    = np.zeros(len(freqs), dtype=complex)   # phasor sum of pickup voltages
+    Y_shunt  = np.zeros(len(freqs), dtype=complex)   # shared output shunt
 
     for idx in active:
         pu   = pickups[idx]
-        _, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring, 1e99)
-        comb = position_comb(freqs, pu.dist_mm, pu.scale_mm, f0) if include_position else 1.0
-        Z_ser = (Zs + Rv1) / np.where(comb > 0, comb, 1e-9)
-        Y_src   += 1.0 / Z_ser
-        Y_shunt += (1.0/Rv2 if Rv2 > 0 else 1e12) + Y_tone
+        gain, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring, 1e99)
+        comb = position_comb(freqs, pu.dist_mm, pu.scale_mm, f0) if include_position else np.ones(len(freqs))
+        # Pickup voltage contribution (complex phasor) = gain * comb
+        V_sum  += gain.astype(complex) * comb
+        Y_shunt += (1.0/Rv2 if Rv2 > 0 else 1e-12) + Y_tone
         Y_shunt += bleed_admittance(freqs, pu.tbleed)
 
+    # Apply cable and amp load to the combined shunt
     Y_cable  = 1j * w * Ccable if Ccable > 0 else np.zeros(len(freqs), dtype=complex)
     Y_amp    = np.full(len(freqs), 1.0 / R_amp, dtype=complex)
     Y_shunt += Y_cable + Y_amp
 
-    Z_load = 1.0 / Y_shunt
-    Z_th   = 1.0 / Y_src
-    gain   = np.abs(Z_load) / np.abs(Z_th + Z_load)
+    gain = np.abs(V_sum)
     return np.nan_to_num(gain, nan=0.0)
