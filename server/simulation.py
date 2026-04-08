@@ -123,7 +123,8 @@ def channel_gain(
     Y_amp   = np.full(len(freqs), 1.0 / R_amp, dtype=complex)
 
     if wiring == "50s":
-        Y_shunt  = (1/Rv2 if Rv2 > 0 else 0) + Y_tone + Y_cable + Y_bleed + Y_amp
+        # Rv2=0 means wiper at ground → infinite shunt (dead short at output)
+        Y_shunt  = (1/Rv2 if Rv2 > 0 else 1e12) + Y_tone + Y_cable + Y_bleed + Y_amp
         Z_load   = 1.0 / Y_shunt
         Z_denom  = Zs + Rv1 + Z_load
         gain     = np.abs(Z_load) / np.abs(Z_denom)
@@ -133,7 +134,8 @@ def channel_gain(
         Z_input  = 1.0 / Y_input
         v1       = np.abs(Z_input) / np.abs(Zs + Z_input)
         Z_th     = 1.0 / (1.0/Zs + 1.0/Z_input)
-        Y_load2  = (1/Rv2 if Rv2 > 0 else 0) + Y_cable + Y_amp
+        # Rv2=0 → dead short at output wiper
+        Y_load2  = (1/Rv2 if Rv2 > 0 else 1e12) + Y_cable + Y_amp
         Z_load2  = 1.0 / Y_load2
         gain     = v1 * np.abs(Z_load2) / np.abs(Z_th + Rv1 + Z_load2)
 
@@ -185,7 +187,7 @@ def sweep(
         comb = position_comb(freqs, pu.dist_mm) if include_position else 1.0
         Z_ser = (Zs + Rv1) / np.where(comb > 0, comb, 1e-9)
         Y_src   += 1.0 / Z_ser
-        Y_shunt += (1.0/Rv2 if Rv2 > 0 else 0) + Y_tone
+        Y_shunt += (1.0/Rv2 if Rv2 > 0 else 1e12) + Y_tone
         Y_shunt += bleed_admittance(freqs, pu.tbleed)
 
     Y_cable  = 1j * w * Ccable if Ccable > 0 else np.zeros(len(freqs), dtype=complex)
