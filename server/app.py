@@ -556,9 +556,12 @@ document.head.appendChild(sc);
                                   label="Coil",density="compact",hide_details=True,
                                   v_show=(f"{p}is_hb",))
                     with v.VCol(cols=6):
+                        html.Div(f"Polarity: {{{{ {p}polarity===1?'Normal':'Reversed' }}}}",
+                                 classes="text-caption text-medium-emphasis")
                         with v.VBtnToggle(v_model=(f"{p}polarity",),
                                           mandatory=True,density="compact",
-                                          rounded="lg",border=True):
+                                          rounded="lg",border=True,
+                                          color="primary"):
                             v.VBtn(value=1,  size="small", text="N",
                                    title="Normal polarity")
                             v.VBtn(value=-1, size="small", text="R",
