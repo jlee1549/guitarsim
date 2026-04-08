@@ -34,6 +34,7 @@ def test_tone_rolloff():
     hi = np.searchsorted(FREQS, 5000)
     assert np.mean(r_rolled[hi:]) < np.mean(r_open[hi:])
 
+
 def test_volume_rolloff():
     r_full = sweep([PickupParams(rdc=7500, L=3.8, Cp=120e-12, vol_knob=10)],
                    [0], 500e-12, "none", "50s")
@@ -66,7 +67,7 @@ def test_triangular_excitation():
     dl = triangular_excitation(500, 0.12)
     assert len(dl) == 500
     assert np.max(dl) <= 1.0 + 1e-9
-    assert dl[0] == pytest.approx(0.0, abs=0.01)
+    assert abs(np.mean(dl)) < 0.01   # DC removed — mean near zero
 
 
 def test_ks_harmonics():

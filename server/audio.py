@@ -44,21 +44,20 @@ STRING_NAMES = ["E2", "A2", "D3", "G3", "B3", "E4"]
 
 def triangular_excitation(period: int, pluck_pos: float) -> np.ndarray:
     """
-    Physical triangular string displacement for a pluck at position p.
-
-    For a string of N samples with pluck point at p_idx = round(p * N):
-      x[n] = n / p_idx              for n < p_idx   (bridge-side slope)
-      x[n] = (N-n) / (N - p_idx)   for n >= p_idx  (nut-side slope)
-
-    Harmonic spectrum: amplitude of harmonic k is sin(k*pi*p)/(k*pi*p)
-    -> rolls off as 1/k for large k, with nulls at k = 1/p, 2/p, ...
-    This is the pluck-point comb filter, analytically embedded.
+    Physical triangular string displacement.
+    DC-removed: a symmetric triangle has zero mean only when p=0.5;
+    at other pluck positions the mean is nonzero and must be subtracted
+    or the KS loop accumulates a bias that sounds like static/rumble.
     """
     N     = period
     p_idx = max(1, min(N - 2, round(pluck_pos * N)))
     x     = np.zeros(N)
-    x[:p_idx]  = np.arange(p_idx) / p_idx
-    x[p_idx:]  = np.arange(N - p_idx, 0, -1) / (N - p_idx)
+    x[:p_idx] = np.arange(p_idx) / p_idx
+    x[p_idx:] = np.arange(N - p_idx, 0, -1) / (N - p_idx)
+    x -= x.mean()          # remove DC bias
+    pk = np.max(np.abs(x))
+    if pk > 0:
+        x /= pk
     return x.astype(np.float64)
 
 
@@ -94,32 +93,31 @@ def ks_string(
     # Physical triangular pluck — no noise, no filtering needed
     dl = triangular_excitation(period, pluck_pos)
 
-    out     = np.zeros(n_samples, dtype=np.float64)
     ap_f_st = 0.0
     ap_s_st = 0.0
-    prev    = dl[-1]
 
-    for i in range(n_samples):
-        idx     = i % period
-        out[i]  = dl[idx]
-
-        # Averaging LPF — differential harmonic decay (brightens to dark over time)
-        lp   = (dl[idx] + prev) * 0.5
-        prev = dl[idx]
-        lp  *= decay
-
-        # Fractional delay all-pass (pitch accuracy)
+    def _ks_step(idx: int) -> None:
+        nonlocal ap_f_st, ap_s_st
+        # Average with the PREVIOUS slot (already filtered this pass) — canonical KS
+        prev_idx = (idx - 1) % period
+        lp = (dl[idx] + dl[prev_idx]) * 0.5 * decay
         ap_f_out = ap_frac * (lp - ap_f_st) + ap_f_st
-        ap_f_st  = lp
-        lp       = ap_f_out
-
-        # Stiffness dispersion all-pass (inharmonicity)
+        ap_f_st  = lp;  lp = ap_f_out
         if stiffness > 0:
             ap_s_out = stiffness * (lp - ap_s_st) + ap_s_st
-            ap_s_st  = lp
-            lp       = ap_s_out
-
+            ap_s_st  = lp;  lp = ap_s_out
         dl[idx] = np.clip(lp, -2.0, 2.0)
+
+    # Warm-up: several full periods so the filter fully settles
+    # and all delay-line slots hold consistent filtered values
+    for i in range(period * 10):
+        _ks_step(i % period)
+
+    out = np.zeros(n_samples, dtype=np.float64)
+    for i in range(n_samples):
+        idx    = i % period
+        out[i] = dl[idx]
+        _ks_step(idx)
 
     return out.astype(np.float32)
 
@@ -182,8 +180,18 @@ def render_pluck(
 
     n_samples = int(np.ceil(sr * NOTE_DUR_S))
     sig       = ks_string(f0, t60, stiff, pluck_pos, n_samples, sr)
-    sig       = body_eq(sig, sr)
-    conv      = fft_convolve(sig, ir)
+
+    # Remove DC and apply gentle high-pass (20 Hz) to kill rumble from KS bias
+    sig -= sig.mean()
+    sos_hp = butter(2, 20.0 / (sr / 2.0), btype='high', output='sos')
+    sig    = sosfilt(sos_hp, sig).astype(np.float32)
+
+    sig = body_eq(sig, sr)
+
+    # Final DC removal after body EQ
+    sig -= sig.mean()
+
+    conv = fft_convolve(sig, ir)
 
     conv = np.nan_to_num(conv[:n_samples], nan=0.0)
 

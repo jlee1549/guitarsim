@@ -27,8 +27,45 @@ class PickupParams:
     Ctone: float = 22e-9
     vol_knob: float = 10.0   # 0–10
     tone_knob: float = 10.0  # 0–10
-    dist_mm: float = 80.0    # pickup distance from bridge
-    scale_mm: float = 628.0  # guitar scale length
+    dist_mm: float = 80.0
+    scale_mm: float = 628.0
+    vol_taper: str = "audio"   # "linear", "audio", "custom_15", "custom_30"
+    tone_taper: str = "audio"  # same options
+
+
+def apply_taper(knob: float, taper: str) -> float:
+    """
+    Convert a knob position (0–10) to a resistance fraction (0–1) based on taper type.
+
+    Linear (B):    alpha = knob/10  — equal resistance per degree
+    Audio (A):     ~10% resistance at midpoint. Models standard log pot.
+                   Uses the common guitar approximation: R = (10^(2*alpha) - 1) / 99
+                   where alpha = knob/10. Gives 10% at knob=5, smooth swell.
+    Custom 15%:    Midpoint = 15%. Piecewise linear (RS-style, less extreme than audio).
+    Custom 30%:    Midpoint = 30%. Vintage taper / Mojotone style. Most linear feel.
+    """
+    alpha = knob / 10.0
+    if taper == "linear":
+        return alpha
+    elif taper == "audio":
+        # Standard audio taper approximation — 10% resistance at midpoint
+        # Rearranged: fraction = (10^(2*alpha) - 1) / 99
+        # Clamped to [0,1] to handle floating point edge cases
+        return float(np.clip((10.0 ** (2.0 * alpha) - 1.0) / 99.0, 0.0, 1.0))
+    elif taper == "custom_15":
+        # Piecewise linear with 15% at midpoint (RS SuperPot style)
+        if alpha <= 0.5:
+            return 0.15 * (alpha / 0.5)
+        else:
+            return 0.15 + 0.85 * ((alpha - 0.5) / 0.5)
+    elif taper == "custom_30":
+        # Piecewise linear with 30% at midpoint (vintage/Mojotone style)
+        if alpha <= 0.5:
+            return 0.30 * (alpha / 0.5)
+        else:
+            return 0.30 + 0.70 * ((alpha - 0.5) / 0.5)
+    else:
+        return alpha  # fallback to linear
 
 
 def pickup_source_z(freqs: np.ndarray, pu: PickupParams) -> np.ndarray:
@@ -42,7 +79,7 @@ def pickup_source_z(freqs: np.ndarray, pu: PickupParams) -> np.ndarray:
 def tone_admittance(freqs: np.ndarray, pu: PickupParams) -> np.ndarray:
     """Tone branch admittance. knob=10: large Rs → near open. knob=0: Rs≈0 → max cut."""
     w = 2 * np.pi * freqs
-    Rs = pu.Rtone * (pu.tone_knob / 10.0) + 10.0  # 10Ω floor
+    Rs = pu.Rtone * apply_taper(pu.tone_knob, pu.tone_taper) + 10.0  # 10Ω floor
     Xt = -1 / (w * pu.Ctone) if pu.Ctone > 0 else np.full_like(w, -1e15)
     Z_tone = Rs + 1j * Xt
     return 1.0 / Z_tone
@@ -78,9 +115,10 @@ def channel_gain(
     """
     w = 2 * np.pi * freqs
     Zs = pickup_source_z(freqs, pu)
-    alpha = pu.vol_knob / 10.0
-    Rv1 = pu.Rvol * (1 - alpha)
-    Rv2 = pu.Rvol * alpha
+    # Volume pot: taper maps knob position to resistance fraction
+    alpha = apply_taper(pu.vol_knob, pu.vol_taper)
+    Rv1 = pu.Rvol * (1 - alpha)   # upper segment (series with pickup)
+    Rv2 = pu.Rvol * alpha          # lower segment (shunts to ground)
 
     Y_tone = tone_admittance(freqs, pu)
     Y_bleed = bleed_admittance(freqs, tbleed)

@@ -86,10 +86,43 @@ input[type=number] { font-size:12px; width:100%; padding:3px 6px; border:0.5px s
       <option value="network">cap + resistor (100 pF / 150k)</option>
     </select>
   </div>
+  <div class="card">
+    <div class="sub">pot taper</div>
+    <div style="font-size:10px;color:#888;margin-bottom:3px;">volume taper</div>
+    <select id="vol_taper" onchange="setTaper()">
+      <option value="audio">Audio / log (A) — standard</option>
+      <option value="linear">Linear (B) — on/off feel</option>
+      <option value="custom_15">Custom 15% — RS SuperPot</option>
+      <option value="custom_30">Custom 30% — vintage</option>
+    </select>
+    <div style="font-size:10px;color:#888;margin-bottom:3px;margin-top:6px;">tone taper</div>
+    <select id="tone_taper" onchange="setTaper()">
+      <option value="audio">Audio / log (A) — standard</option>
+      <option value="linear">Linear (B)</option>
+      <option value="custom_15">Custom 15% — RS SuperPot</option>
+      <option value="custom_30">Custom 30% — vintage</option>
+    </select>
+  </div>
 </div>
-<div style="display:flex;align-items:center;gap:14px;margin:1.2rem 0;">
-  <button class="pluck-btn" onclick="pluck()">strum</button>
-  <span class="muted" id="audioStatus">click to hear E A D G B e</span>
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:1.2rem 0 .5rem;">
+  <div>
+    <div class="sub" style="margin-bottom:3px;">string</div>
+    <select id="pluck_string" style="font-size:12px;padding:4px 6px;border:0.5px solid rgba(0,0,0,0.2);border-radius:6px;background:#fff;">
+      <option value="0">E2 — 82.4 Hz</option>
+      <option value="1" selected>A2 — 110 Hz</option>
+      <option value="2">D3 — 146.8 Hz</option>
+      <option value="3">G3 — 196 Hz</option>
+      <option value="4">B3 — 246.9 Hz</option>
+      <option value="5">E4 — 329.6 Hz</option>
+    </select>
+  </div>
+  <div style="flex:1;min-width:160px;">
+    <div class="sub" style="margin-bottom:3px;">pluck position: <span id="pluckPosVal">12%</span> from bridge</div>
+    <input type="range" id="pluck_pos" min="3" max="45" step="1" value="12" style="width:100%;accent-color:#378ADD;"
+      oninput="document.getElementById('pluckPosVal').textContent=this.value+'%'">
+  </div>
+  <button class="pluck-btn" onclick="pluck()">pluck</button>
+  <span class="muted" id="audioStatus">click to hear</span>
 </div>
 <div style="position:relative;width:100%;height:300px;margin-top:.5rem;">
   <canvas id="chart"></canvas>
@@ -173,6 +206,14 @@ const FREQS=[]; for(let d=1.7;d<=4.3;d+=0.035) FREQS.push(Math.pow(10,d));
 let state={layout:'HH',pickups:[],toggleIdx:0,toggleOptions:[],anchor:null};
 let myChart=null, audioCtx=null;
 // ── Circuit model ─────────────────────────────────────────────────────────
+function applyTaper(knob, taper) {
+  const a = knob / 10;
+  if (taper === 'linear') return a;
+  if (taper === 'audio')  return Math.min(1, Math.max(0, (Math.pow(10, 2*a) - 1) / 99));
+  if (taper === 'custom_15') return a <= 0.5 ? 0.15*(a/0.5) : 0.15 + 0.85*((a-0.5)/0.5);
+  if (taper === 'custom_30') return a <= 0.5 ? 0.30*(a/0.5) : 0.30 + 0.70*((a-0.5)/0.5);
+  return a;
+}
 function pickupZ(f,pu){
   const w=2*Math.PI*f;
   const r=pu.rdc, xi=w*pu.L, m2=r*r+xi*xi;
@@ -183,7 +224,7 @@ function toneY(f,pu){
   const w=2*Math.PI*f;
   // knob=10: full Rtone in series → RC corner very high → near open
   // knob=0:  Rs≈0 → cap directly to ground → max treble cut
-  const Rs=pu.Rtone*(pu.toneKnob/10)+10;
+  const Rs=pu.Rtone*applyTaper(pu.toneKnob, pu.toneTaper||'audio')+10;
   const Xt=pu.Ctone>0?-1/(w*pu.Ctone):-1e15;
   const m2=Rs*Rs+Xt*Xt;
   return {r:m2>0?Rs/m2:0, i:m2>0?-Xt/m2:0};
@@ -209,7 +250,7 @@ function positionCombGain(f,distMm,scaleMm){
 function chanGain(f,pu,Ccable,tbleed,wiring){
   const w=2*Math.PI*f;
   const Zs=pickupZ(f,pu);
-  const a=pu.volKnob/10, Rv1=pu.Rvol*(1-a), Rv2=pu.Rvol*a;
+  const a=applyTaper(pu.volKnob, pu.volTaper||'audio'), Rv1=pu.Rvol*(1-a), Rv2=pu.Rvol*a;
   const Yt=toneY(f,pu), Ybl=bleedY(f,tbleed), Yc={r:0,i:Ccable>0?w*Ccable:0};
   if(wiring==='50s'){
     const Ysh=addY(addY(addY({r:Rv2>0?1/Rv2:0,i:0},Yt),Yc),Ybl);
@@ -376,155 +417,93 @@ function pluck(){
   const refPeak=Math.max(...refResp)||1;
   const curPeak=Math.max(...freqResp);
   const referenceGain=Math.max(0.0, Math.min(1.0, curPeak/refPeak));
-  // Standard tuning, T60 decay, stiffness, per-string excitation bandwidth
-  const STRING_FREQS  = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
-  const STRING_T60    = [8.0,   7.0,    5.5,    4.0,    3.0,    2.2];
-  const STRING_STIFF  = [0.0,   0.0,    0.0005, 0.002,  0.004,  0.007];
-  const STRING_GAINS  = [0.88,  0.82,   0.76,   0.70,   0.64,   0.58];
-  // [excitation dur ms, lo freq factor, hi freq factor]
-  // wound strings: longer, warmer; plain strings: shorter, brighter
-  const STRING_EXC = [
-    [8.0, 60,  800],   // E2 wound
-    [7.0, 80,  1200],  // A2 wound
-    [6.0, 100, 1800],  // D3 wound
-    [4.0, 120, 3500],  // G3 plain (transition)
-    [3.0, 150, 6000],  // B3 plain
-    [2.5, 200, 8000],  // E4 plain
-  ];
+  // Single string — triangular pluck excitation (physical initial condition)
+  // x[n] = n/p_idx for n < p_idx,  x[n] = (N-n)/(N-p_idx) for n >= p_idx
+  // Produces correct 1/n^2 harmonic rolloff and pluck-point comb analytically
+  const STRING_FREQS = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
+  const STRING_T60   = [7.0,   6.0,    4.5,    3.2,    2.4,    1.8];
+  const STRING_STIFF = [0.0,   0.0,    0.0003, 0.0015, 0.003,  0.005];
 
-  const strumGap = 0.055, noteDur = 2.5;
-  const totalDur = strumGap * 5 + noteDur;
-  const totalSamples = Math.ceil(SR * totalDur);
-  const mixBuf = new Float32Array(totalSamples);
+  const strIdx   = +document.getElementById('pluck_string').value;
+  const pluckPct = +document.getElementById('pluck_pos').value / 100;
+  const f0    = STRING_FREQS[strIdx];
+  const t60   = STRING_T60[strIdx];
+  const stiff = STRING_STIFF[strIdx];
 
-  function t60ToDecay(t60) {
-    // 0.001^(1/(SR*t60)) — gain per sample for -60dB in t60 seconds
-    return Math.pow(0.001, 1.0 / (SR * t60));
+  const periodExact = SR / f0;
+  const period = Math.floor(periodExact);
+  const frac   = periodExact - period;
+  const apFrac = (1 - frac) / (1 + frac);
+
+  // T60 to per-sample decay: 10^(-3/(t60*f0))
+  const decay = Math.pow(10, -3 / (t60 * f0));
+
+  // Triangular initial condition — DC removed to prevent static/rumble
+  const pIdx = Math.max(1, Math.min(period - 2, Math.round(pluckPct * period)));
+  const dl = new Float32Array(period);
+  for (let n = 0; n < pIdx; n++)      dl[n] = n / pIdx;
+  for (let n = pIdx; n < period; n++) dl[n] = (period - n) / (period - pIdx);
+  // Remove DC bias (triangle mean is nonzero when pluck pos != 0.5)
+  let dlMean = 0;
+  for (let n = 0; n < period; n++) dlMean += dl[n];
+  dlMean /= period;
+  let dlPeak = 0;
+  for (let n = 0; n < period; n++) { dl[n] -= dlMean; dlPeak = Math.max(dlPeak, Math.abs(dl[n])); }
+  if (dlPeak > 0) for (let n = 0; n < period; n++) dl[n] /= dlPeak;
+
+  const noteDur   = 3.0;
+  const nSamples  = Math.ceil(SR * noteDur);
+  const ksOut  = new Float32Array(nSamples);
+  let apFState = 0, apSState = 0;
+
+  function ksStep(idx) {
+    // Average with PREVIOUS slot (already filtered) — canonical KS, no boundary clicks
+    const prev = (idx - 1 + period) % period;
+    let lp = (dl[idx] + dl[prev]) * 0.5 * decay;
+    const apFOut = apFrac * (lp - apFState) + apFState;
+    apFState = lp; lp = apFOut;
+    if (stiff > 0) {
+      const apSOut = stiff * (lp - apSState) + apSState;
+      apSState = lp; lp = apSOut;
+    }
+    dl[idx] = Math.max(-2, Math.min(2, lp));
   }
 
-  function bandpassExcitation(f0, durMs, loHz, hiHz) {
-    const period = Math.round(SR / f0);
-    const nAtt   = Math.min(Math.round(durMs * SR / 1000), period);
-    const dl     = new Float32Array(period);
+  // Warm-up: 3 full periods so filter fully settles before we collect output
+  for (let i = 0; i < period * 10; i++) ksStep(i % period);
 
-    // Attack/decay envelope + noise
-    for (let i = 0; i < nAtt; i++) {
-      const t   = i / nAtt;
-      const env = Math.exp(-6 * t) * (1 - Math.exp(-80 * t));
-      dl[i] = (Math.random() * 2 - 1) * env;
-    }
-
-    // Single-pole bandpass approximation: HP then LP
-    // HP at loHz
-    const hpAlpha = 1 / (1 + loHz / (SR / (2 * Math.PI)));
-    let hpPrev = 0;
-    for (let i = 0; i < period; i++) {
-      const v = dl[i] - hpPrev;
-      hpPrev  = hpAlpha * hpPrev + (1 - hpAlpha) * dl[i];
-      dl[i]   = v;
-    }
-    // LP at hiHz
-    const lpAlpha = Math.min(hiHz / (SR / (2 * Math.PI)), 0.99);
-    let lpPrev = 0;
-    for (let i = 0; i < period; i++) {
-      lpPrev = lpAlpha * dl[i] + (1 - lpAlpha) * lpPrev;
-      dl[i]  = lpPrev;
-    }
-
-    // Normalise delay line
-    let peak = 0;
-    for (let i = 0; i < period; i++) peak = Math.max(peak, Math.abs(dl[i]));
-    if (peak > 0) for (let i = 0; i < period; i++) dl[i] /= peak;
-    return dl;
+  for (let i = 0; i < nSamples; i++) {
+    const idx = i % period;
+    ksOut[i]  = dl[idx];
+    ksStep(idx);
   }
 
-  function ksExtended(f0, t60, stiffness, durMs, loHz, hiHz, nSamples) {
-    const periodExact = SR / f0;
-    const period = Math.floor(periodExact);
-    const frac   = periodExact - period;
-    const apFrac = (1 - frac) / (1 + frac);
-    const decay  = t60ToDecay(t60);
+  const conv = convolve(ksOut, ir);
+  const totalSamples = Math.min(conv.length, nSamples);
 
-    const dl = bandpassExcitation(f0, durMs, loHz, hiHz);
-    const out = new Float32Array(nSamples);
-    let apFState = 0, apSState = 0;
-
-    for (let i = 0; i < nSamples; i++) {
-      const idx = i % period, nx = (i + 1) % period;
-      out[i] = dl[idx];
-
-      // Low-pass + decay
-      let lp = decay * (dl[idx] + dl[nx]) * 0.5;
-
-      // Fractional delay all-pass
-      const apFOut = apFrac * (lp - apFState) + apFState;
-      apFState = lp;
-      lp = apFOut;
-
-      // Stiffness dispersion all-pass
-      if (stiffness > 0) {
-        const apSOut = stiffness * (lp - apSState) + apSState;
-        apSState = lp;
-        lp = apSOut;
-      }
-
-      dl[idx] = Math.max(-2, Math.min(2, lp));
-    }
-    return out;
-  }
-
-  function pickClick(f0, nAtt) {
-    const out = new Float32Array(nAtt);
-    const dets = [1.0, 1.41, 2.73, 4.12, 7.0];
-    for (let k = 0; k < dets.length; k++) {
-      for (let i = 0; i < nAtt; i++) {
-        const t = i / nAtt;
-        const env = Math.exp(-t * 12) * (1 - Math.exp(-t * 200));
-        out[i] += Math.sin(2*Math.PI * f0 * dets[k] * t) * env * Math.pow(0.5, k);
-      }
-    }
-    return out;
-  }
-  const attSamples = Math.round(0.012 * SR);
-
-  for (let s = 0; s < 6; s++) {
-    const f0    = STRING_FREQS[s];
-    const t60   = STRING_T60[s];
-    const stiff = STRING_STIFF[s];
-    const gain  = STRING_GAINS[s];
-    const [durMs, loHz, hiHz] = STRING_EXC[s];
-    const nSamples = Math.ceil(SR * noteDur);
-    const startSample = Math.round(s * strumGap * SR);
-
-    const ks   = ksExtended(f0, t60, stiff, durMs, loHz, hiHz, nSamples);
-    const conv = convolve(ks, ir);
-
-    // Blend pick click — inharmonic attack transient, bypasses electronics IR
-    const click = pickClick(f0, attSamples);
-    for (let i = 0; i < Math.min(click.length, conv.length); i++) conv[i] += click[i] * 0.25;
-
-    const copyLen = Math.min(conv.length, totalSamples - startSample);
-    for (let i = 0; i < copyLen; i++) mixBuf[startSample + i] += conv[i] * gain;
-  }
-  // Scale by referenceGain so volume knob is audible — no peak normalization
+  // Remove DC from convolved output before encoding
+  let convMean = 0;
+  for (let i = 0; i < totalSamples; i++) convMean += conv[i];
+  convMean /= totalSamples;
+  // Scale by referenceGain — volume knob audible; soft limit, no normalization
   const sat = 1.5, satNorm = Math.tanh(sat);
-  for (let i = 0; i < mixBuf.length; i++) {
-    mixBuf[i] = Math.tanh(mixBuf[i] * referenceGain * sat) / satNorm;
+  const mixBuf = new Float32Array(totalSamples);
+  for (let i = 0; i < totalSamples; i++) {
+    mixBuf[i] = Math.tanh((conv[i] - convMean) * referenceGain * sat) / satNorm;
   }
-  // Gentle tanh saturation — softens digital clipping artifacts
-  const sat=1.2, satNorm=Math.tanh(sat);
-  for(let i=0;i<mixBuf.length;i++) mixBuf[i]=Math.tanh(mixBuf[i]*sat)/satNorm;
-  const buf=audioCtx.createBuffer(1,totalSamples,SR);
+
+  const buf = audioCtx.createBuffer(1, totalSamples, SR);
   buf.getChannelData(0).set(mixBuf);
-  const src=audioCtx.createBufferSource(); src.buffer=buf;
-  const gainNode=audioCtx.createGain();
-  gainNode.gain.setValueAtTime(0.75,audioCtx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+totalDur-0.1);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.setValueAtTime(0.75, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + noteDur - 0.1);
   src.connect(gainNode); gainNode.connect(audioCtx.destination);
   src.start(audioCtx.currentTime);
-  document.getElementById('audioStatus').textContent='playing — E A D G B e';
-  setTimeout(()=>document.getElementById('audioStatus').textContent='click to hear E A D G B e',
-    Math.ceil(totalDur*1000)+200);
+  const strName = ['E2','A2','D3','G3','B3','E4'][strIdx];
+  document.getElementById('audioStatus').textContent = 'playing ' + strName;
+  setTimeout(() => document.getElementById('audioStatus').textContent = 'click to hear',
+    Math.ceil(noteDur * 1000) + 200);
 }
 // ── UI ────────────────────────────────────────────────────────────────────
 function applyLayout(){
@@ -535,6 +514,7 @@ function applyLayout(){
     pos:d.pos, type:d.type, preset:0,
     rdc:PICKUP_DB[d.type][0].rdc, L:PICKUP_DB[d.type][0].L, Cp:PICKUP_DB[d.type][0].Cp,
     Rvol:500e3, Rtone:500e3, Ctone:22e-9, volKnob:10, toneKnob:10,
+    volTaper:'audio', toneTaper:'audio',
     posDistMm:POS_DEFAULTS[d.pos]?.dist??80,
     posScaleMm:POS_DEFAULTS[d.pos]?.scale??628,
   }));
@@ -658,6 +638,13 @@ function setPotVal(i,key,val){state.pickups[i][key]=+val;updateAll(true);}
 function setKnob(i,key,val){state.pickups[i][key]=+val;updateAll(false);}
 function setPosDist(i,v){state.pickups[i].posDistMm=+v;updateAll(true);}
 function setPosScale(i,v){state.pickups[i].posScaleMm=+v;updateAll(true);}
+
+function setTaper(){
+  const vt=document.getElementById('vol_taper').value;
+  const tt=document.getElementById('tone_taper').value;
+  state.pickups=state.pickups.map(p=>({...p,volTaper:vt,toneTaper:tt}));
+  updateAll(true);
+}
 applyLayout();
 </script>
 </body>
