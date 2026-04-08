@@ -38,9 +38,14 @@ STRING_NAMES = ["E2", "A2", "D3", "G3", "B3", "E4"]
 def triangular_excitation(period: int, pluck_pos: float) -> np.ndarray:
     N     = period
     p_idx = max(1, min(N - 2, round(pluck_pos * N)))
-    x     = np.zeros(N)
-    x[:p_idx] = np.arange(p_idx) / p_idx
-    x[p_idx:] = np.arange(N - p_idx, 0, -1) / (N - p_idx)
+    # Velocity excitation: magnetic pickup measures string velocity, not displacement.
+    # Velocity of plucked string at release = derivative of triangular displacement:
+    # constant positive on nut side, constant negative on bridge side.
+    # This gives 1/n harmonic rolloff (vs 1/n^2 for displacement), matching
+    # the bright attack of a real electric guitar string.
+    x = np.zeros(N)
+    x[:p_idx] =  1.0 / p_idx
+    x[p_idx:] = -1.0 / (N - p_idx)
     x -= x.mean()
     pk = np.max(np.abs(x))
     if pk > 0: x /= pk
