@@ -192,25 +192,35 @@ def sweep(
             gain *= np.abs(position_comb(freqs, pu.dist_mm, pu.scale_mm, f0))
         return gain
 
-    # Parallel combination with correct phase from position combs.
-    # Each pickup's voltage contribution is: gain_i * comb_i (complex phasor).
-    # The output is the magnitude of the sum of phasor contributions.
-    # This correctly models quack: neck+mid positions have out-of-phase
-    # contributions at frequencies where the combs have opposite signs.
-    w        = 2 * np.pi * freqs
-    V_sum    = np.zeros(len(freqs), dtype=complex)   # phasor sum of pickup voltages
-    Y_shunt  = np.zeros(len(freqs), dtype=complex)   # shared output shunt
+    # Two code paths depending on whether the position comb is needed.
+    w = 2 * np.pi * freqs
+
+    if not include_position:
+        # Chart display path: no comb, no polarity. Each pickup contributes
+        # its full channel gain (with cable + amp load already applied).
+        # This gives clean resonant-peak curves showing the electronics character.
+        # Pickups combine as parallel voltage sources: sum the gains directly.
+        gain_sum = np.zeros(len(freqs))
+        for idx in active:
+            pu = pickups[idx]
+            gain, *_ = channel_gain(freqs, pu, Ccable, wiring, R_amp)
+            gain_sum += gain
+        return np.nan_to_num(gain_sum / len(active), nan=0.0)
+
+    # Audio path: full phasor sum with position comb and polarity.
+    # Each pickup's voltage contribution is: polarity * gain * comb (complex).
+    # This correctly models quack from RWRP phase cancellation.
+    V_sum    = np.zeros(len(freqs), dtype=complex)
+    Y_shunt  = np.zeros(len(freqs), dtype=complex)
 
     for idx in active:
         pu   = pickups[idx]
         gain, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring, 1e99)
-        comb = position_comb(freqs, pu.dist_mm, pu.scale_mm, f0) if include_position else np.ones(len(freqs))
-        # Pickup voltage contribution (complex phasor) = gain * comb
+        comb = position_comb(freqs, pu.dist_mm, pu.scale_mm, f0)
         V_sum  += pu.polarity * gain.astype(complex) * comb
         Y_shunt += (1.0/Rv2 if Rv2 > 0 else 1e-12) + Y_tone
         Y_shunt += bleed_admittance(freqs, pu.tbleed)
 
-    # Apply cable and amp load to the combined shunt
     Y_cable  = 1j * w * Ccable if Ccable > 0 else np.zeros(len(freqs), dtype=complex)
     Y_amp    = np.full(len(freqs), 1.0 / R_amp, dtype=complex)
     Y_shunt += Y_cable + Y_amp
