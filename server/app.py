@@ -13,6 +13,7 @@ from trame.decorators import TrameApp, change
 import numpy as np, base64
 
 from taper_utils import vol_pct_to_knob, knob_to_vol_pct
+from simulation import PickupParams, sweep, FREQS
 from audio import render_pluck, OPEN_STRINGS, STRING_NAMES, DEFAULT_PLUCK_POS
 from pickup_db import PICKUPS, LAYOUTS, POSITION_DEFAULTS
 
