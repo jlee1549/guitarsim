@@ -133,17 +133,22 @@ class GuitarSim:
 
         params = []
         for i, p in enumerate(self._pu_data):
-            # Volume: shared master or per-pickup
             vol_knob = master_vol if shared_vol else p["vol_knob"]
-            # Tone knob: from tone_map assignment
             t = tmap[i] if i < len(tmap) else ""
-            if t == "tone1":
+            if not shared_vol:
+                # Independent controls (HH Les Paul): each pickup uses its own
+                # per-pickup tone knob directly. tone_map only applies for shared layouts.
+                tone_knob = p["tone_knob"]
+                has_tone  = True
+            elif t == "tone1":
                 tone_knob = tone1
+                has_tone  = True
             elif t == "tone2":
                 tone_knob = tone2
+                has_tone  = True
             else:
-                tone_knob = 10.0   # no tone pot → full open
-            has_tone = (t != "")
+                tone_knob = 10.0   # no tone pot (e.g. SSS bridge)
+                has_tone  = False
 
             params.append(PickupParams(
                 rdc=p["rdc"], L=p["L"], Cp=p["Cp"],
