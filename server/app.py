@@ -12,7 +12,7 @@ from trame.decorators import TrameApp, change
 
 import numpy as np, base64
 
-from simulation import PickupParams, sweep, FREQS
+from taper_utils import vol_pct_to_knob, knob_to_vol_pct
 from audio import render_pluck, OPEN_STRINGS, STRING_NAMES, DEFAULT_PLUCK_POS
 from pickup_db import PICKUPS, LAYOUTS, POSITION_DEFAULTS
 
@@ -37,7 +37,9 @@ def _toggle_options(n):
 def _default_pu(pos, ptype):
     db  = PICKUPS[ptype]; dp = POSITION_DEFAULTS.get(pos,{"dist_mm":80,"scale_mm":628})
     return {"pos":pos,"type":ptype,"rdc":db[0]["rdc"],"L":db[0]["L"],"Cp":db[0]["Cp"],
-            "Rvol":500000,"Rtone":500000,"Ctone_nf":22,"vol_knob":10.0,"tone_knob":10.0,
+            "Rvol":500000,"Rtone":500000,"Ctone_nf":22,
+            "vol_knob":10.0,"tone_knob":10.0,
+            "vol_pct":100.0,"tone_pct":100.0,
             "dist_mm":dp["dist_mm"],"tbleed":"none","has_tone":True}
 
 @TrameApp()
@@ -70,9 +72,9 @@ class GuitarSim:
         # Topology state — shared vs independent controls
         self.state.shared_vol   = False   # HH: independent vol per pickup
         self.state.tone_map     = ["tone1","tone2",""]  # per-pickup tone assignment
-        self.state.master_vol   = 10.0    # used when shared_vol=True
-        self.state.tone1_knob   = 10.0    # master tone 1 (neck / all)
-        self.state.tone2_knob   = 10.0    # master tone 2 (middle, SSS/HSS)
+        self.state.master_vol   = 100.0   # 0-100% wiper position
+        self.state.tone1_knob   = 100.0   # 0-100% wiper position
+        self.state.tone2_knob   = 100.0   # 0-100% wiper position
 
         # Preset lists — value is index so trame state gets an int, not a string
         self.state.hb_presets  = [{"title": p["name"], "value": i} for i,p in enumerate(PICKUPS["humbucker"])]
@@ -100,23 +102,27 @@ class GuitarSim:
     # ── flat state helpers ────────────────────────────────────────────────
     def _push_pu_state(self):
         for i,p in enumerate(self._pu_data):
-            setattr(self.state,f"pu{i}_vol",     p["vol_knob"])
-            setattr(self.state,f"pu{i}_tone",    p["tone_knob"])
-            setattr(self.state,f"pu{i}_rvol",    p["Rvol"])
-            setattr(self.state,f"pu{i}_rtone",   p["Rtone"])
-            setattr(self.state,f"pu{i}_ctone_nf",p["Ctone_nf"])
-            setattr(self.state,f"pu{i}_dist_mm", p["dist_mm"])
-            setattr(self.state,f"pu{i}_tbleed",  p["tbleed"])
+            setattr(self.state,f"pu{i}_vol",      p["vol_pct"])     # slider: 0-100% wiper
+            setattr(self.state,f"pu{i}_tone",     p["tone_pct"])    # slider: 0-100% wiper
+            setattr(self.state,f"pu{i}_rvol",     p["Rvol"])
+            setattr(self.state,f"pu{i}_rtone",    p["Rtone"])
+            setattr(self.state,f"pu{i}_ctone_nf", p["Ctone_nf"])
+            setattr(self.state,f"pu{i}_dist_mm",  p["dist_mm"])
+            setattr(self.state,f"pu{i}_tbleed",   p["tbleed"])
 
     def _pull_pu_state(self):
         for i in range(MAX_PU):
-            self._pu_data[i]["vol_knob"]  = getattr(self.state,f"pu{i}_vol",    10.0)
-            self._pu_data[i]["tone_knob"] = getattr(self.state,f"pu{i}_tone",   10.0)
-            self._pu_data[i]["Rvol"]      = getattr(self.state,f"pu{i}_rvol",   500000)
-            self._pu_data[i]["Rtone"]     = getattr(self.state,f"pu{i}_rtone",  500000)
+            vol_pct  = float(getattr(self.state, f"pu{i}_vol",  100.0))
+            tone_pct = float(getattr(self.state, f"pu{i}_tone", 100.0))
+            self._pu_data[i]["vol_pct"]   = vol_pct
+            self._pu_data[i]["tone_pct"]  = tone_pct
+            self._pu_data[i]["vol_knob"]  = vol_pct_to_knob(vol_pct)
+            self._pu_data[i]["tone_knob"] = vol_pct_to_knob(tone_pct)
+            self._pu_data[i]["Rvol"]      = getattr(self.state,f"pu{i}_rvol",    500000)
+            self._pu_data[i]["Rtone"]     = getattr(self.state,f"pu{i}_rtone",   500000)
             self._pu_data[i]["Ctone_nf"]  = getattr(self.state,f"pu{i}_ctone_nf",22)
-            self._pu_data[i]["dist_mm"]   = getattr(self.state,f"pu{i}_dist_mm",80)
-            self._pu_data[i]["tbleed"]    = getattr(self.state,f"pu{i}_tbleed", "none")
+            self._pu_data[i]["dist_mm"]   = getattr(self.state,f"pu{i}_dist_mm", 80)
+            self._pu_data[i]["tbleed"]    = getattr(self.state,f"pu{i}_tbleed",  "none")
 
     def _active(self):
         opts = self.state.tog_options; idx = self.state.toggle_idx
@@ -126,10 +132,10 @@ class GuitarSim:
         self._pull_pu_state()
         scale      = self.state.scale_mm
         shared_vol = self.state.shared_vol
-        master_vol = self.state.master_vol
-        tmap       = self.state.tone_map   # ["tone1","tone2",""] etc.
-        tone1      = self.state.tone1_knob
-        tone2      = self.state.tone2_knob
+        master_vol = vol_pct_to_knob(self.state.master_vol)   # pct -> knob
+        tmap       = self.state.tone_map
+        tone1      = vol_pct_to_knob(self.state.tone1_knob)   # pct -> knob
+        tone2      = vol_pct_to_knob(self.state.tone2_knob)   # pct -> knob
 
         params = []
         for i, p in enumerate(self._pu_data):
@@ -201,6 +207,11 @@ class GuitarSim:
             self._pu_data[i]["has_tone"] = has_tone
         for i in range(MAX_PU):
             setattr(self.state, f"pu{i}_preset", 0)
+            setattr(self.state, f"pu{i}_vol",  100.0)
+            setattr(self.state, f"pu{i}_tone", 100.0)
+        self.state.master_vol = 100.0
+        self.state.tone1_knob = 100.0
+        self.state.tone2_knob = 100.0
         self._push_pu_state()
         self.state.shared_vol  = defn["shared_vol"]
         self.state.tone_map    = [t or "" for t in tmap] + [""] * (MAX_PU - n)
@@ -412,13 +423,13 @@ document.head.appendChild(sc);
                         with v.VCol(cols=12,sm=6,md=4,v_show="shared_vol"):
                             with v.VCard(variant="outlined"):
                                 with v.VCardText():
-                                    html.Div("Master volume: {{ master_vol.toFixed(1) }}",classes="text-caption text-medium-emphasis")
+                                    html.Div("Master volume: {{ master_vol.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
                                     v.VSlider(v_model=("master_vol",),min=0,max=10,step=0.1,hide_details=True,color="primary",classes="mb-2")
-                                    html.Div("Tone 1 (neck): {{ tone1_knob.toFixed(1) }}",classes="text-caption text-medium-emphasis")
+                                    html.Div("Tone 1 (neck): {{ tone1_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
                                     v.VSlider(v_model=("tone1_knob",),min=0,max=10,step=0.1,hide_details=True,color="secondary",classes="mb-2")
                                     # Tone 2 only visible for SSS/HSS (has 2 tone pots)
                                     with html.Div(v_show="tone_map.filter(t=>t==='tone2').length > 0"):
-                                        html.Div("Tone 2 (mid): {{ tone2_knob.toFixed(1) }}",classes="text-caption text-medium-emphasis")
+                                        html.Div("Tone 2 (mid): {{ tone2_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
                                         v.VSlider(v_model=("tone2_knob",),min=0,max=10,step=0.1,hide_details=True,color="secondary")
 
                     # Pluck controls
@@ -457,11 +468,11 @@ document.head.appendChild(sc);
                           label="Model",density="compact",hide_details=True,classes="mb-3")
                 v.VDivider(classes="mb-2")
                 with html.Div(v_show="!shared_vol"):
-                    html.Div(f"Volume: {{{{ {p}vol.toFixed(1) }}}}",classes="text-caption text-medium-emphasis")
-                    v.VSlider(v_model=(f"{p}vol",),min=0,max=10,step=0.1,hide_details=True,color="primary")
+                    html.Div(f"Volume: {{{{ {p}vol.toFixed(0) }}}}%",classes="text-caption text-medium-emphasis")
+                    v.VSlider(v_model=(f"{p}vol",),min=0,max=100,step=1,hide_details=True,color="primary")
                 with html.Div(v_show=f"tone_map[{i}] !== ''"):
-                    html.Div(f"Tone: {{{{ {p}tone.toFixed(1) }}}}",classes="text-caption text-medium-emphasis",v_show="!shared_vol")
-                    v.VSlider(v_model=(f"{p}tone",),min=0,max=10,step=0.1,hide_details=True,color="secondary",v_show="!shared_vol")
+                    html.Div(f"Tone: {{{{ {p}tone.toFixed(0) }}}}%",classes="text-caption text-medium-emphasis",v_show="!shared_vol")
+                    v.VSlider(v_model=(f"{p}tone",),min=0,max=100,step=1,hide_details=True,color="secondary",v_show="!shared_vol")
                 with v.VRow(dense=True,classes="mt-1"):
                     with v.VCol(cols=6):
                         v.VSelect(v_model=(f"{p}rvol",),items=(POT_ITEMS,),label="Vol pot",density="compact",hide_details=True)
