@@ -49,6 +49,10 @@ class PickupParams:
     # the knob-to-alpha mapping shown for reference — not the simulation result.
     vol_alpha: float  = -1.0
     tone_alpha: float = -1.0
+    # Polarity: +1 = normal, -1 = reversed (RWRP or out-of-phase wiring).
+    # Multiplies the phasor contribution in sweep() — only audible in
+    # multi-pickup combinations.
+    polarity: int = 1
 
 def apply_taper(knob: float, taper: str) -> float:
     alpha = knob / 10.0
@@ -202,7 +206,7 @@ def sweep(
         gain, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring, 1e99)
         comb = position_comb(freqs, pu.dist_mm, pu.scale_mm, f0) if include_position else np.ones(len(freqs))
         # Pickup voltage contribution (complex phasor) = gain * comb
-        V_sum  += gain.astype(complex) * comb
+        V_sum  += pu.polarity * gain.astype(complex) * comb
         Y_shunt += (1.0/Rv2 if Rv2 > 0 else 1e-12) + Y_tone
         Y_shunt += bleed_admittance(freqs, pu.tbleed)
 

@@ -38,9 +38,11 @@ def _toggle_options(n):
 def _default_pu(pos, ptype):
     db  = PICKUPS[ptype]; dp = POSITION_DEFAULTS.get(pos,{"dist_mm":80,"scale_mm":628})
     return {"pos":pos,"type":ptype,"rdc":db[0]["rdc"],"L":db[0]["L"],"Cp":db[0]["Cp"],
+            "base_rdc":db[0]["rdc"],"base_L":db[0]["L"],"base_Cp":db[0]["Cp"],
             "Rvol":500000,"Rtone":500000,"Ctone_nf":22,
             "vol_knob":10.0,"tone_knob":10.0,
             "vol_pct":100.0,"tone_pct":100.0,
+            "polarity":1, "coil_config":"series",
             "dist_mm":dp["dist_mm"],"tbleed":"none","has_tone":True}
 
 @TrameApp()
@@ -87,9 +89,12 @@ class GuitarSim:
                          _default_pu("bridge","humbucker"),
                          _default_pu("bridge","humbucker")]
         for i in range(MAX_PU):
-            setattr(self.state, f"pu{i}_preset",  0)
-            setattr(self.state, f"pu{i}_presets", [{"title":"loading...","value":0}])
-        self._push_pu_state()  # overwrites pu{i}_presets with the real list
+            setattr(self.state, f"pu{i}_preset",      0)
+            setattr(self.state, f"pu{i}_presets",     [{"title":"loading...","value":0}])
+            setattr(self.state, f"pu{i}_polarity",    1)
+            setattr(self.state, f"pu{i}_coil_config", "series")
+            setattr(self.state, f"pu{i}_is_hb",       True)
+        self._push_pu_state()  # overwrites with real values
 
         # Chart state — plain lists, rendered by Chart.js in client.Script
         self._freqs = [round(f,1) for f in FREQS.tolist()]
@@ -108,28 +113,51 @@ class GuitarSim:
             presets_list = {"humbucker": self.state.hb_presets,
                             "single":    self.state.sc_presets,
                             "p90":       self.state.p90_presets}.get(ptype, self.state.hb_presets)
-            setattr(self.state,f"pu{i}_presets",  presets_list)
-            setattr(self.state,f"pu{i}_vol",      p["vol_pct"])
-            setattr(self.state,f"pu{i}_tone",     p["tone_pct"])
-            setattr(self.state,f"pu{i}_rvol",     p["Rvol"])
-            setattr(self.state,f"pu{i}_rtone",    p["Rtone"])
-            setattr(self.state,f"pu{i}_ctone_nf", p["Ctone_nf"])
-            setattr(self.state,f"pu{i}_dist_mm",  p["dist_mm"])
-            setattr(self.state,f"pu{i}_tbleed",   p["tbleed"])
+            setattr(self.state,f"pu{i}_presets",     presets_list)
+            setattr(self.state,f"pu{i}_vol",         p["vol_pct"])
+            setattr(self.state,f"pu{i}_tone",        p["tone_pct"])
+            setattr(self.state,f"pu{i}_rvol",        p["Rvol"])
+            setattr(self.state,f"pu{i}_rtone",       p["Rtone"])
+            setattr(self.state,f"pu{i}_ctone_nf",    p["Ctone_nf"])
+            setattr(self.state,f"pu{i}_dist_mm",     p["dist_mm"])
+            setattr(self.state,f"pu{i}_tbleed",      p["tbleed"])
+            setattr(self.state,f"pu{i}_polarity",    p["polarity"])
+            setattr(self.state,f"pu{i}_coil_config", p["coil_config"])
+            setattr(self.state,f"pu{i}_is_hb",       ptype == "humbucker")
 
     def _pull_pu_state(self):
         for i in range(MAX_PU):
             vol_pct  = float(getattr(self.state, f"pu{i}_vol",  100.0))
             tone_pct = float(getattr(self.state, f"pu{i}_tone", 100.0))
-            self._pu_data[i]["vol_pct"]   = vol_pct
-            self._pu_data[i]["tone_pct"]  = tone_pct
-            self._pu_data[i]["vol_knob"]  = vol_pct_to_knob(vol_pct)
-            self._pu_data[i]["tone_knob"] = vol_pct_to_knob(tone_pct)
-            self._pu_data[i]["Rvol"]      = getattr(self.state,f"pu{i}_rvol",    500000)
-            self._pu_data[i]["Rtone"]     = getattr(self.state,f"pu{i}_rtone",   500000)
-            self._pu_data[i]["Ctone_nf"]  = getattr(self.state,f"pu{i}_ctone_nf",22)
-            self._pu_data[i]["dist_mm"]   = getattr(self.state,f"pu{i}_dist_mm", 80)
-            self._pu_data[i]["tbleed"]    = getattr(self.state,f"pu{i}_tbleed",  "none")
+            polarity    = int(getattr(self.state, f"pu{i}_polarity",    1))
+            coil_config = str(getattr(self.state, f"pu{i}_coil_config", "series"))
+            self._pu_data[i]["vol_pct"]      = vol_pct
+            self._pu_data[i]["tone_pct"]     = tone_pct
+            self._pu_data[i]["vol_knob"]     = vol_pct_to_knob(vol_pct)
+            self._pu_data[i]["tone_knob"]    = vol_pct_to_knob(tone_pct)
+            self._pu_data[i]["polarity"]     = polarity
+            self._pu_data[i]["coil_config"]  = coil_config
+            self._pu_data[i]["Rvol"]         = getattr(self.state,f"pu{i}_rvol",    500000)
+            self._pu_data[i]["Rtone"]        = getattr(self.state,f"pu{i}_rtone",   500000)
+            self._pu_data[i]["Ctone_nf"]     = getattr(self.state,f"pu{i}_ctone_nf",22)
+            self._pu_data[i]["dist_mm"]      = getattr(self.state,f"pu{i}_dist_mm", 80)
+            self._pu_data[i]["tbleed"]       = getattr(self.state,f"pu{i}_tbleed",  "none")
+            # Apply coil config scaling to base pickup values
+            br = self._pu_data[i]["base_rdc"]
+            bL = self._pu_data[i]["base_L"]
+            bC = self._pu_data[i]["base_Cp"]
+            if coil_config == "parallel":
+                self._pu_data[i]["rdc"] = br / 2
+                self._pu_data[i]["L"]   = bL / 4   # L ~ N^2
+                self._pu_data[i]["Cp"]  = bC / 2
+            elif coil_config == "split":
+                self._pu_data[i]["rdc"] = br / 2
+                self._pu_data[i]["L"]   = bL / 4
+                self._pu_data[i]["Cp"]  = bC / 2
+            else:  # series (default)
+                self._pu_data[i]["rdc"] = br
+                self._pu_data[i]["L"]   = bL
+                self._pu_data[i]["Cp"]  = bC
 
     def _active(self):
         opts = self.state.tog_options; idx = self.state.toggle_idx
@@ -182,6 +210,7 @@ class GuitarSim:
                 vol_taper=self.state.vol_taper, tone_taper=self.state.tone_taper,
                 tbleed=p["tbleed"], has_tone=has_tone,
                 vol_alpha=v_alpha, tone_alpha=t_alpha if has_tone else -1.0,
+                polarity=p["polarity"],
             ))
         return params
 
@@ -225,11 +254,15 @@ class GuitarSim:
         for i, d in enumerate(defs):
             self._pu_data[i] = _default_pu(d["pos"], d["type"])
             self._pu_data[i]["has_tone"] = (tmap[i] is not None)
+            self._pu_data[i]["polarity"] = d.get("polarity", 1)
         # Reset all knob state to wide-open
         for i in range(MAX_PU):
-            setattr(self.state, f"pu{i}_preset", 0)
-            setattr(self.state, f"pu{i}_vol",   100.0)
-            setattr(self.state, f"pu{i}_tone",  100.0)
+            setattr(self.state, f"pu{i}_preset",      0)
+            setattr(self.state, f"pu{i}_vol",         100.0)
+            setattr(self.state, f"pu{i}_tone",        100.0)
+            setattr(self.state, f"pu{i}_coil_config", "series")
+            pol = defs[i].get("polarity", 1) if i < len(defs) else 1
+            setattr(self.state, f"pu{i}_polarity", pol)
         self.state.master_vol  = 100.0
         self.state.tone1_knob  = 100.0
         self.state.tone2_knob  = 100.0
@@ -255,7 +288,8 @@ class GuitarSim:
 
     def _make_pu_watcher(self, i):
         keys = [f"pu{i}_vol",f"pu{i}_tone",f"pu{i}_rvol",f"pu{i}_rtone",
-                f"pu{i}_ctone_nf",f"pu{i}_dist_mm",f"pu{i}_tbleed"]
+                f"pu{i}_ctone_nf",f"pu{i}_dist_mm",f"pu{i}_tbleed",
+                f"pu{i}_polarity",f"pu{i}_coil_config"]
         @self.state.change(*keys)
         def _watch(**_): self._compute_and_push()
 
@@ -270,9 +304,15 @@ class GuitarSim:
             db    = PICKUPS[ptype]
             if 0 <= preset_idx < len(db):
                 p = db[preset_idx]
-                self._pu_data[i]["rdc"] = p["rdc"]
-                self._pu_data[i]["L"]   = p["L"]
-                self._pu_data[i]["Cp"]  = p["Cp"]
+                self._pu_data[i]["base_rdc"] = p["rdc"]
+                self._pu_data[i]["base_L"]   = p["L"]
+                self._pu_data[i]["base_Cp"]  = p["Cp"]
+                self._pu_data[i]["rdc"]      = p["rdc"]
+                self._pu_data[i]["L"]        = p["L"]
+                self._pu_data[i]["Cp"]       = p["Cp"]
+                # Reset coil config to series when preset changes
+                self._pu_data[i]["coil_config"] = "series"
+                setattr(self.state, f"pu{i}_coil_config", "series")
             self._compute_and_push()
 
     def pluck(self):
@@ -501,6 +541,23 @@ document.head.appendChild(sc);
                          v_show=f"tone_map[{i}] !== ''")
                 v.VSlider(v_model=(f"{p}ctone_nf",),min=1,max=100,step=1,hide_details=True,
                           v_show=f"tone_map[{i}] !== ''")
+                v.VDivider(classes="my-2")
+                with v.VRow(dense=True,classes="mb-1"):
+                    with v.VCol(cols=6):
+                        v.VSelect(v_model=(f"{p}coil_config",),
+                                  items=([{"title":"Series","value":"series"},
+                                          {"title":"Parallel","value":"parallel"},
+                                          {"title":"Split","value":"split"}],),
+                                  label="Coil",density="compact",hide_details=True,
+                                  v_show=(f"{p}is_hb",))
+                    with v.VCol(cols=6):
+                        with v.VBtnToggle(v_model=(f"{p}polarity",),
+                                          mandatory=True,density="compact",
+                                          rounded="lg",border=True):
+                            v.VBtn(value=1,  size="small", text="N",
+                                   title="Normal polarity")
+                            v.VBtn(value=-1, size="small", text="R",
+                                   title="Reversed / RWRP")
                 v.VDivider(classes="my-2")
                 html.Div("Position",classes="text-caption text-uppercase text-medium-emphasis")
                 html.Div(f"Dist from bridge: {{{{ {p}dist_mm }}}} mm",classes="text-caption text-medium-emphasis")

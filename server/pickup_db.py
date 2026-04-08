@@ -176,35 +176,35 @@ LAYOUTS = {
     #   shared_vol: True = one master volume knob for all pickups
     #   tone_map:   list, one entry per pickup — "tone1", "tone2", or None (no tone pot)
     #               None means pickup goes straight to volume with no tone cap shunt
-    "HH":  {"pickups": [{"pos":"neck",   "type":"humbucker"},
-                         {"pos":"bridge", "type":"humbucker"}],
+    "HH":  {"pickups": [{"pos":"neck",   "type":"humbucker", "polarity": 1},
+                         {"pos":"bridge", "type":"humbucker", "polarity": 1}],
              "shared_vol": False,
              "tone_map":   ["tone1", "tone2"]},
 
-    "HSS": {"pickups": [{"pos":"neck",   "type":"humbucker"},
-                         {"pos":"middle", "type":"single"},
-                         {"pos":"bridge", "type":"single"}],
-             "shared_vol": True,
-             "tone_map":   ["tone1", "tone2", None]},  # bridge SC: no tone pot
-
-    "HHS": {"pickups": [{"pos":"neck",   "type":"humbucker"},
-                         {"pos":"middle", "type":"humbucker"},
-                         {"pos":"bridge", "type":"single"}],
+    "HSS": {"pickups": [{"pos":"neck",   "type":"humbucker", "polarity": 1},
+                         {"pos":"middle", "type":"single",    "polarity":-1},  # RWRP
+                         {"pos":"bridge", "type":"single",    "polarity": 1}],
              "shared_vol": True,
              "tone_map":   ["tone1", "tone2", None]},
 
-    "SSS": {"pickups": [{"pos":"neck",   "type":"single"},
-                         {"pos":"middle", "type":"single"},
-                         {"pos":"bridge", "type":"single"}],
+    "HHS": {"pickups": [{"pos":"neck",   "type":"humbucker", "polarity": 1},
+                         {"pos":"middle", "type":"humbucker", "polarity": 1},
+                         {"pos":"bridge", "type":"single",    "polarity":-1}],  # RWRP
              "shared_vol": True,
-             "tone_map":   ["tone1", "tone2", None]},  # bridge SC: no tone pot
+             "tone_map":   ["tone1", "tone2", None]},
 
-    "H":   {"pickups": [{"pos":"bridge", "type":"humbucker"}],
+    "SSS": {"pickups": [{"pos":"neck",   "type":"single", "polarity": 1},
+                         {"pos":"middle", "type":"single", "polarity":-1},  # RWRP
+                         {"pos":"bridge", "type":"single", "polarity": 1}],
+             "shared_vol": True,
+             "tone_map":   ["tone1", "tone2", None]},
+
+    "H":   {"pickups": [{"pos":"bridge", "type":"humbucker", "polarity": 1}],
              "shared_vol": False,
              "tone_map":   ["tone1"]},
 
-    "SS":  {"pickups": [{"pos":"neck",   "type":"single"},   # Telecaster
-                         {"pos":"bridge", "type":"single"}],
+    "SS":  {"pickups": [{"pos":"neck",   "type":"single", "polarity": 1},
+                         {"pos":"bridge", "type":"single", "polarity": 1}],
              "shared_vol": True,
-             "tone_map":   ["tone1", "tone1"]},  # both pickups share one tone pot
+             "tone_map":   ["tone1", "tone1"]},
 }
