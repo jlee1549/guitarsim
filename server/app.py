@@ -42,7 +42,7 @@ def _default_pu(pos, ptype):
             "Rvol":500000,"Rtone":500000,"Ctone_nf":22,
             "vol_knob":10.0,"tone_knob":10.0,
             "vol_pct":100.0,"tone_pct":100.0,
-            "polarity":1, "coil_config":"series",
+            "polarity":1, "coil_config":"series", "coil_side":"outer",
             "dist_mm":dp["dist_mm"],"tbleed":"none","has_tone":True}
 
 @TrameApp()
@@ -93,6 +93,7 @@ class GuitarSim:
             setattr(self.state, f"pu{i}_presets",     [{"title":"loading...","value":0}])
             setattr(self.state, f"pu{i}_polarity",    1)
             setattr(self.state, f"pu{i}_coil_config", "series")
+            setattr(self.state, f"pu{i}_coil_side",   "outer")
             setattr(self.state, f"pu{i}_is_hb",       True)
         self._push_pu_state()  # overwrites with real values
 
@@ -124,6 +125,7 @@ class GuitarSim:
             setattr(self.state,f"pu{i}_tbleed",      p["tbleed"])
             setattr(self.state,f"pu{i}_polarity",    p["polarity"])
             setattr(self.state,f"pu{i}_coil_config", p["coil_config"])
+            setattr(self.state,f"pu{i}_coil_side",   p["coil_side"])
             setattr(self.state,f"pu{i}_is_hb",       ptype == "humbucker")
 
     def _pull_pu_state(self):
@@ -132,29 +134,44 @@ class GuitarSim:
             tone_pct = float(getattr(self.state, f"pu{i}_tone", 100.0))
             polarity    = int(getattr(self.state, f"pu{i}_polarity",    1))
             coil_config = str(getattr(self.state, f"pu{i}_coil_config", "series"))
+            coil_side   = str(getattr(self.state, f"pu{i}_coil_side",   "outer"))
             self._pu_data[i]["vol_pct"]      = vol_pct
             self._pu_data[i]["tone_pct"]     = tone_pct
             self._pu_data[i]["vol_knob"]     = vol_pct_to_knob(vol_pct)
             self._pu_data[i]["tone_knob"]    = vol_pct_to_knob(tone_pct)
             self._pu_data[i]["polarity"]     = polarity
             self._pu_data[i]["coil_config"]  = coil_config
+            self._pu_data[i]["coil_side"]    = coil_side
             self._pu_data[i]["Rvol"]         = getattr(self.state,f"pu{i}_rvol",    500000)
             self._pu_data[i]["Rtone"]        = getattr(self.state,f"pu{i}_rtone",   500000)
             self._pu_data[i]["Ctone_nf"]     = getattr(self.state,f"pu{i}_ctone_nf",22)
             self._pu_data[i]["dist_mm"]      = getattr(self.state,f"pu{i}_dist_mm", 80)
             self._pu_data[i]["tbleed"]       = getattr(self.state,f"pu{i}_tbleed",  "none")
-            # Apply coil config scaling to base pickup values
+            # Apply coil config scaling from measured GuitarFreak data.
+            # PAF Pro measured: series(rdc=9687,L=4.318,Cp=120) vs
+            #   parallel(rdc=2435,L=1.459,Cp=276) vs split(rdc=5045,L=2.123,Cp=177)
+            # rdc: parallel=rdc/4, split=rdc/2 (one coil)
+            # L:   parallel=L/4 (N^2), split=L/2 (N^2 for half turns ≈ L/4 but
+            #      measured shows L_split ≈ L/2 — coil coupling effect)
+            # Cp:  does NOT halve — self-cap increases relative to L.
+            #      parallel≈2.3x full, split≈1.5x full (measured)
             br = self._pu_data[i]["base_rdc"]
             bL = self._pu_data[i]["base_L"]
             bC = self._pu_data[i]["base_Cp"]
             if coil_config == "parallel":
-                self._pu_data[i]["rdc"] = br / 2
-                self._pu_data[i]["L"]   = bL / 4   # L ~ N^2
-                self._pu_data[i]["Cp"]  = bC / 2
+                self._pu_data[i]["rdc"] = br / 4      # two coils in parallel
+                self._pu_data[i]["L"]   = bL / 4      # L ~ N^2
+                self._pu_data[i]["Cp"]  = bC * 2.3    # measured ≈ 2.3x series
             elif coil_config == "split":
-                self._pu_data[i]["rdc"] = br / 2
-                self._pu_data[i]["L"]   = bL / 4
-                self._pu_data[i]["Cp"]  = bC / 2
+                self._pu_data[i]["rdc"] = br / 2      # one coil, half turns
+                self._pu_data[i]["L"]   = bL / 4      # L ~ N^2 for half turns
+                self._pu_data[i]["Cp"]  = bC * 1.5    # measured ≈ 1.5x series
+                # Inner coil is ~10mm further from bridge than outer.
+                # Outer = bridge-side coil (slightly brighter comb character).
+                # Inner = neck-side coil (slightly darker comb character).
+                base_dist = POSITION_DEFAULTS.get(self._pu_data[i]["pos"], {"dist_mm": 80})["dist_mm"]
+                offset = -10 if coil_side == "outer" else +10
+                self._pu_data[i]["dist_mm"] = max(5, base_dist + offset)
             else:  # series (default)
                 self._pu_data[i]["rdc"] = br
                 self._pu_data[i]["L"]   = bL
@@ -300,7 +317,7 @@ class GuitarSim:
     def _make_pu_watcher(self, i):
         keys = [f"pu{i}_vol",f"pu{i}_tone",f"pu{i}_rvol",f"pu{i}_rtone",
                 f"pu{i}_ctone_nf",f"pu{i}_dist_mm",f"pu{i}_tbleed",
-                f"pu{i}_polarity",f"pu{i}_coil_config"]
+                f"pu{i}_polarity",f"pu{i}_coil_config",f"pu{i}_coil_side"]
         @self.state.change(*keys)
         def _watch(**_): self._compute_and_push()
 
@@ -574,6 +591,18 @@ document.head.appendChild(sc);
                                    title="Normal polarity")
                             v.VBtn(value=(-1,), size="small", text="R",
                                    title="Reversed / RWRP")
+                # Inner/outer coil selector — only meaningful for split
+                with html.Div(v_show=f"{p}coil_config==='split' && {p}is_hb",
+                               classes="mt-1"):
+                    html.Div("Coil tap",classes="text-caption text-medium-emphasis")
+                    with v.VBtnToggle(v_model=(f"{p}coil_side",),
+                                      mandatory=True,density="compact",
+                                      rounded="lg",border=True,
+                                      color="primary"):
+                        v.VBtn(value=("outer",), size="small", text="Outer",
+                               title="Bridge-side coil")
+                        v.VBtn(value=("inner",), size="small", text="Inner",
+                               title="Neck-side coil")
                 v.VDivider(classes="my-2")
                 html.Div("Position",classes="text-caption text-uppercase text-medium-emphasis")
                 html.Div(f"Dist from bridge: {{{{ {p}dist_mm }}}} mm",classes="text-caption text-medium-emphasis")
