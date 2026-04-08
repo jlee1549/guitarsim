@@ -131,12 +131,15 @@ class GuitarSim:
 
     def _make_params(self):
         self._pull_pu_state()
-        scale      = self.state.scale_mm
-        shared_vol = self.state.shared_vol
-        master_vol = vol_pct_to_knob(self.state.master_vol)   # pct -> knob
-        tmap       = self.state.tone_map
-        tone1      = vol_pct_to_knob(self.state.tone1_knob)   # pct -> knob
-        tone2      = vol_pct_to_knob(self.state.tone2_knob)   # pct -> knob
+        scale       = self.state.scale_mm
+        shared_vol  = self.state.shared_vol
+        master_pct  = float(self.state.master_vol)             # 0-100 wiper pct
+        master_vol  = vol_pct_to_knob(master_pct)             # for legacy knob field
+        tmap        = self.state.tone_map
+        tone1_pct   = float(self.state.tone1_knob)            # 0-100 wiper pct
+        tone2_pct   = float(self.state.tone2_knob)
+        tone1       = vol_pct_to_knob(tone1_pct)              # for legacy knob field
+        tone2       = vol_pct_to_knob(tone2_pct)
 
         params = []
         for i, p in enumerate(self._pu_data):
@@ -157,6 +160,14 @@ class GuitarSim:
                 tone_knob = 10.0   # no tone pot (e.g. SSS bridge)
                 has_tone  = False
 
+            # vol_alpha/tone_alpha = direct wiper fraction from slider pct.
+            # This bypasses apply_taper() in channel_gain, so taper selector
+            # does not affect the simulation — slider position IS the alpha.
+            v_alpha = (p["vol_pct"] / 100.0) if not shared_vol else (master_pct / 100.0)
+            if t == "tone1":   t_alpha = tone1_pct / 100.0
+            elif t == "tone2": t_alpha = tone2_pct / 100.0
+            else:              t_alpha = 1.0
+
             params.append(PickupParams(
                 rdc=p["rdc"], L=p["L"], Cp=p["Cp"],
                 Rvol=p["Rvol"], Rtone=p["Rtone"], Ctone=p["Ctone_nf"]*1e-9,
@@ -164,6 +175,7 @@ class GuitarSim:
                 dist_mm=p["dist_mm"], scale_mm=scale,
                 vol_taper=self.state.vol_taper, tone_taper=self.state.tone_taper,
                 tbleed=p["tbleed"], has_tone=has_tone,
+                vol_alpha=v_alpha, tone_alpha=t_alpha if has_tone else -1.0,
             ))
         return params
 

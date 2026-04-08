@@ -43,10 +43,12 @@ class PickupParams:
     vol_taper: str  = "audio"
     tone_taper: str = "audio"
     tbleed: str     = "none"
-    # If True, this pickup shares its volume with another (master vol topology).
-    # When shared, the volume pot appears only once at the output, not per-pickup.
-    # For simplicity we still model it per-pickup but use the same knob value.
     has_tone: bool  = True   # False = no tone pot (bridge on SSS Strat)
+    # Direct wiper fraction (0-1). When >= 0, bypasses vol_knob + apply_taper.
+    # Slider pct (0-100) / 100 goes here. Taper selector then only affects
+    # the knob-to-alpha mapping shown for reference — not the simulation result.
+    vol_alpha: float  = -1.0
+    tone_alpha: float = -1.0
 
 def apply_taper(knob: float, taper: str) -> float:
     alpha = knob / 10.0
@@ -76,7 +78,8 @@ def tone_admittance(freqs: np.ndarray, pu: PickupParams) -> np.ndarray:
     if not pu.has_tone:
         return np.zeros(len(freqs), dtype=complex)
     w  = 2 * np.pi * freqs
-    Rs = pu.Rtone * apply_taper(pu.tone_knob, pu.tone_taper) + 10.0
+    tone_a = pu.tone_alpha if pu.tone_alpha >= 0 else apply_taper(pu.tone_knob, pu.tone_taper)
+    Rs = pu.Rtone * tone_a + 10.0
     Xt = -1 / (w * pu.Ctone) if pu.Ctone > 0 else np.full_like(w, -1e15)
     return 1.0 / (Rs + 1j * Xt)
 
@@ -110,7 +113,7 @@ def channel_gain(
     """
     w      = 2 * np.pi * freqs
     Zs     = pickup_source_z(freqs, pu)
-    alpha  = apply_taper(pu.vol_knob, pu.vol_taper)
+    alpha  = pu.vol_alpha if pu.vol_alpha >= 0 else apply_taper(pu.vol_knob, pu.vol_taper)
     Rv1    = pu.Rvol * (1 - alpha)
     Rv2    = pu.Rvol * alpha
 
