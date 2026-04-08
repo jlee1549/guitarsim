@@ -420,15 +420,19 @@ function pluck(){
   // Single string — triangular pluck excitation (physical initial condition)
   // x[n] = n/p_idx for n < p_idx,  x[n] = (N-n)/(N-p_idx) for n >= p_idx
   // Produces correct 1/n^2 harmonic rolloff and pluck-point comb analytically
-  const STRING_FREQS = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
-  const STRING_T60   = [7.0,   6.0,    4.5,    3.2,    2.4,    1.8];
-  const STRING_STIFF = [0.0,   0.0,    0.0003, 0.0015, 0.003,  0.005];
+  const STRING_FREQS      = [82.41, 110.00, 146.83, 196.00, 246.94, 329.63];
+  const STRING_T60        = [7.0,   6.0,    4.5,    3.2,    2.4,    1.8];
+  const STRING_STIFF      = [0.0,   0.0,    0.0003, 0.0015, 0.003,  0.005];
+  // IIR brightness: higher = brighter (more harmonics preserved).
+  // mrahtz convention: y[n] = b*x[n] + (1-b)*y[n-1]
+  const STRING_BRIGHTNESS = [0.50,  0.55,   0.60,   0.65,   0.70,   0.75];
 
   const strIdx   = +document.getElementById('pluck_string').value;
   const pluckPct = +document.getElementById('pluck_pos').value / 100;
-  const f0    = STRING_FREQS[strIdx];
-  const t60   = STRING_T60[strIdx];
-  const stiff = STRING_STIFF[strIdx];
+  const f0         = STRING_FREQS[strIdx];
+  const t60        = STRING_T60[strIdx];
+  const stiff      = STRING_STIFF[strIdx];
+  const brightness = STRING_BRIGHTNESS[strIdx];
 
   const periodExact = SR / f0;
   const period = Math.floor(periodExact);
@@ -454,28 +458,32 @@ function pluck(){
   const noteDur   = 3.0;
   const nSamples  = Math.ceil(SR * noteDur);
   const ksOut  = new Float32Array(nSamples);
-  let apFState = 0, apSState = 0;
+  let apFState = 0, apSState = 0, lpState = 0, writeIdx = 0;
 
-  function ksStep(idx) {
-    // Average with PREVIOUS slot (already filtered) — canonical KS, no boundary clicks
-    const prev = (idx - 1 + period) % period;
-    let lp = (dl[idx] + dl[prev]) * 0.5 * decay;
-    const apFOut = apFrac * (lp - apFState) + apFState;
-    apFState = lp; lp = apFOut;
+  // One-pole IIR loop filter: y[n] = b*y[n-1] + g*(1-b)*x[n]
+  // b = brightness (pole, controls cutoff)
+  // g = DC gain per sample (= decay, controls T60)
+  // Separates amplitude envelope from tone color.
+  function ksStep(g) {
+    const x   = dl[writeIdx];
+    let   y   = brightness * lpState + g * (1 - brightness) * x;
+    lpState   = y;
+    const apFOut = apFrac * (y - apFState) + apFState;
+    apFState  = y;  y = apFOut;
     if (stiff > 0) {
-      const apSOut = stiff * (lp - apSState) + apSState;
-      apSState = lp; lp = apSOut;
+      const apSOut = stiff * (y - apSState) + apSState;
+      apSState = y;  y = apSOut;
     }
-    dl[idx] = Math.max(-2, Math.min(2, lp));
+    dl[writeIdx] = Math.max(-2, Math.min(2, y));
+    writeIdx = (writeIdx + 1) % period;
   }
 
-  // Warm-up: 3 full periods so filter fully settles before we collect output
-  for (let i = 0; i < period * 10; i++) ksStep(i % period);
+  // Warm-up 3 periods with g=1 — settles IIR without amplitude loss
+  for (let i = 0; i < period * 3; i++) ksStep(1.0);
 
   for (let i = 0; i < nSamples; i++) {
-    const idx = i % period;
-    ksOut[i]  = dl[idx];
-    ksStep(idx);
+    ksOut[i] = dl[writeIdx];
+    ksStep(decay);
   }
 
   const conv = convolve(ksOut, ir);

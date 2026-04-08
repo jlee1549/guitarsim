@@ -35,7 +35,11 @@ DEFAULT_PLUCK_POS = 0.12
 # Wound strings have near-zero stiffness; plain strings have more
 STRING_STIFFNESS = [0.0, 0.0, 0.0003, 0.0015, 0.003, 0.005]
 
-# T60 per string (seconds)
+# IIR lowpass brightness per string — must increase with pitch.
+# At low b, high-frequency strings get too dark because the filter
+# runs proportionally more times per second (f0 passes/sec).
+# Values tuned so H2/H4 ratios are consistent across the register.
+STRING_BRIGHTNESS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]
 STRING_T60 = [7.0, 6.0, 4.5, 3.2, 2.4, 1.8]
 
 # Open string frequencies: E2 A2 D3 G3 B3 E4
@@ -73,40 +77,77 @@ def ks_string(
     pluck_pos: float,
     n_samples: int,
     sr: int = SAMPLE_RATE,
+    brightness: float = 0.5,
 ) -> np.ndarray:
     """
     Karplus-Strong with physical triangular excitation.
 
-    The triangular initial condition gives:
-    - Correct 1/n^2 harmonic rolloff (guitar-like timbre from sample 1)
-    - Pluck-point comb filter built into the excitation analytically
-    - Natural darkening as the averaging LPF attenuates harmonics each pass
+    brightness: controls the IIR lowpass smoothing factor in the feedback loop.
+      0.5 = maximum darkening (classic KS, fastest harmonic decay)
+      0.45 = brighter, closer to real guitar on plain strings
+      0.4  = very bright (thin, twangy)
+      Range [0.3, 0.5] — stays below 0.5 to avoid instability.
+
+    Uses IIR lowpass (mrahtz formulation):
+      output = b * input + (1-b) * lastOutput
+    rather than the two-point FIR average, giving a sharper, more controllable
+    rolloff characteristic. Refer: mrahtz/javascript-karplus-strong.
     """
     period_exact = sr / f0
     period       = int(np.floor(period_exact))
     frac         = period_exact - period
 
-    # Fractional delay all-pass: H(z) = (a + z^-1) / (1 + a*z^-1)
     ap_frac = (1.0 - frac) / (1.0 + frac)
     decay   = _t60_to_decay(f0, t60, sr)
+    b       = float(np.clip(brightness, 0.3, 0.5))  # IIR smoothing factor
 
-    # Physical triangular pluck — no noise, no filtering needed
     dl = triangular_excitation(period, pluck_pos)
 
-    ap_f_st = 0.0
-    ap_s_st = 0.0
+    ap_f_st  = 0.0
+    ap_s_st  = 0.0
+    lp_state = 0.0  # IIR filter state (lastOutput)
 
-    def _ks_step(idx: int) -> None:
-        nonlocal ap_f_st, ap_s_st
-        # Average with the PREVIOUS slot (already filtered this pass) — canonical KS
-        prev_idx = (idx - 1) % period
-        lp = (dl[idx] + dl[prev_idx]) * 0.5 * decay
-        ap_f_out = ap_frac * (lp - ap_f_st) + ap_f_st
-        ap_f_st  = lp;  lp = ap_f_out
+    ap_f_st  = 0.0
+    ap_s_st  = 0.0
+    lp_state = 0.0   # one-pole loop filter state y[n-1]
+    write_idx = 0
+
+    # One-pole loop filter: H(z) = g*(1-a) / (1 - a*z^{-1})
+    # Input is current delay-line sample.
+    # g = DC gain = decay (sets T60 at fundamental)
+    # a = pole position = brightness (sets cutoff; higher a = brighter)
+    # Output: y[n] = a*y[n-1] + g*(1-a)*x[n]
+    # This separates amplitude envelope (g) from tone color (a).
+    # Warm-up: run loop filter with g=1 (no decay) to settle IIR state
+    # before switching on real decay for output.
+    def _step(g: float) -> None:
+        nonlocal ap_f_st, ap_s_st, lp_state, write_idx
+        x = dl[write_idx]
+        # One-pole IIR loop filter (Jaffe & Smith 1983 formulation)
+        y = b * lp_state + g * (1.0 - b) * x
+        lp_state = y
+        # Fractional delay all-pass
+        ap_f_out = ap_frac * (y - ap_f_st) + ap_f_st
+        ap_f_st  = y
+        y = ap_f_out
+        # Stiffness dispersion all-pass
         if stiffness > 0:
-            ap_s_out = stiffness * (lp - ap_s_st) + ap_s_st
-            ap_s_st  = lp;  lp = ap_s_out
-        dl[idx] = np.clip(lp, -2.0, 2.0)
+            ap_s_out = stiffness * (y - ap_s_st) + ap_s_st
+            ap_s_st  = y
+            y = ap_s_out
+        dl[write_idx] = np.clip(y, -2.0, 2.0)
+        write_idx = (write_idx + 1) % period
+
+    # Warm-up 3 periods with g=1 — settles filter state without amplitude loss
+    for _ in range(period * 3):
+        _step(1.0)
+
+    out = np.zeros(n_samples, dtype=np.float64)
+    for i in range(n_samples):
+        out[i] = dl[write_idx]
+        _step(decay)
+
+    return out.astype(np.float32)
 
     # Warm-up: several full periods so the filter fully settles
     # and all delay-line slots hold consistent filtered values
@@ -171,15 +212,17 @@ def render_pluck(
     Synthesise a single plucked string shaped by freq_response.
     Returns 16-bit mono WAV bytes.
     """
-    f0    = OPEN_STRINGS[string_idx]
-    t60   = STRING_T60[string_idx]
-    stiff = STRING_STIFFNESS[string_idx]
+    f0         = OPEN_STRINGS[string_idx]
+    t60        = STRING_T60[string_idx]
+    stiff      = STRING_STIFFNESS[string_idx]
+    brightness = STRING_BRIGHTNESS[string_idx]
 
     norm_resp = freq_response / (np.max(freq_response) + 1e-12)
     ir        = build_ir(norm_resp, sr)
 
     n_samples = int(np.ceil(sr * NOTE_DUR_S))
-    sig       = ks_string(f0, t60, stiff, pluck_pos, n_samples, sr)
+    sig       = ks_string(f0, t60, stiff, pluck_pos, n_samples, sr,
+                          brightness=brightness)
 
     # Remove DC and apply gentle high-pass (20 Hz) to kill rumble from KS bias
     sig -= sig.mean()
