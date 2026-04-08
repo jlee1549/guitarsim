@@ -94,9 +94,22 @@ def bleed_admittance(freqs: np.ndarray, mode: str) -> np.ndarray:
     return np.zeros(len(freqs), dtype=complex)
 
 
-def position_comb(freqs: np.ndarray, dist_mm: float) -> np.ndarray:
-    d   = dist_mm / 1000.0
-    arg = np.pi * freqs * 2 * d / STRING_WAVE_VELOCITY
+def position_comb(freqs: np.ndarray, dist_mm: float, scale_mm: float = 628.0, f0: float = 0.0) -> np.ndarray:
+    """
+    Pickup position comb filter: |sin(pi * f * 2 * d / v)|
+
+    Wave velocity v = 2 * scale * f0 (per string, from wave equation).
+    If f0 is not given, falls back to a fixed 200 m/s approximation.
+    For the full frequency sweep we use each string's f0 for the KS render,
+    but for the electronics frequency response chart we need a representative
+    velocity — use the geometric mean across strings (~200 m/s is close to D3).
+    """
+    d = dist_mm / 1000.0
+    if f0 > 0:
+        v = 2.0 * (scale_mm / 1000.0) * f0
+    else:
+        v = STRING_WAVE_VELOCITY   # fallback for chart display
+    arg = np.pi * freqs * 2 * d / v
     return np.abs(np.sin(arg))
 
 
@@ -149,6 +162,7 @@ def sweep(
     wiring: str,
     include_position: bool = True,
     R_amp: float = 1e6,
+    f0: float = 0.0,   # string fundamental for per-string comb velocity; 0 = use default
 ) -> np.ndarray:
     """
     Combined frequency response for active pickups (parallel Thévenin combination).
@@ -173,7 +187,7 @@ def sweep(
         pu   = pickups[active[0]]
         gain, *_ = channel_gain(freqs, pu, Ccable, wiring, R_amp)
         if include_position:
-            gain *= position_comb(freqs, pu.dist_mm)
+            gain *= position_comb(freqs, pu.dist_mm, pu.scale_mm, f0)
         return gain
 
     # Parallel Thévenin combination
@@ -184,7 +198,7 @@ def sweep(
     for idx in active:
         pu   = pickups[idx]
         _, Zs, Rv1, Rv2, Y_tone = channel_gain(freqs, pu, 0.0, wiring, 1e99)
-        comb = position_comb(freqs, pu.dist_mm) if include_position else 1.0
+        comb = position_comb(freqs, pu.dist_mm, pu.scale_mm, f0) if include_position else 1.0
         Z_ser = (Zs + Rv1) / np.where(comb > 0, comb, 1e-9)
         Y_src   += 1.0 / Z_ser
         Y_shunt += (1.0/Rv2 if Rv2 > 0 else 1e12) + Y_tone

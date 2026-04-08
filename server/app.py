@@ -283,10 +283,12 @@ class GuitarSim:
             cable  = self.state.ccable_pf * 1e-12
             r_amp  = self.state.r_amp_kohm * 1e3
             pus    = self._make_params()
-            resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp)
-            ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp)
+            si     = int(self.state.pluck_string)
+            f0     = OPEN_STRINGS[si]      # per-string comb velocity
+            resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
+            ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
-            wav = render_pluck(resp,string_idx=int(self.state.pluck_string),
+            wav = render_pluck(resp,string_idx=si,
                                pluck_pos=self.state.pluck_pos/100.0,
                                reference_gain=ref_gain)
             self.state.audio_b64  = base64.b64encode(wav).decode()
@@ -441,13 +443,13 @@ document.head.appendChild(sc);
                             with v.VCard(variant="outlined"):
                                 with v.VCardText():
                                     html.Div("Master volume: {{ master_vol.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("master_vol",),min=0,max=10,step=0.1,hide_details=True,color="primary",classes="mb-2")
+                                    v.VSlider(v_model=("master_vol",),min=0,max=100,step=1,hide_details=True,color="primary",classes="mb-2")
                                     html.Div("Tone 1 (neck): {{ tone1_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("tone1_knob",),min=0,max=10,step=0.1,hide_details=True,color="secondary",classes="mb-2")
+                                    v.VSlider(v_model=("tone1_knob",),min=0,max=100,step=1,hide_details=True,color="secondary",classes="mb-2")
                                     # Tone 2 only visible for SSS/HSS (has 2 tone pots)
                                     with html.Div(v_show="tone_map.filter(t=>t==='tone2').length > 0"):
                                         html.Div("Tone 2 (mid): {{ tone2_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                        v.VSlider(v_model=("tone2_knob",),min=0,max=10,step=0.1,hide_details=True,color="secondary")
+                                        v.VSlider(v_model=("tone2_knob",),min=0,max=100,step=1,hide_details=True,color="secondary")
 
                     # Pluck controls
                     html.Div("Pluck",classes="text-caption text-uppercase text-medium-emphasis mb-1")
