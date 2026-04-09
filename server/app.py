@@ -223,7 +223,10 @@ class GuitarSim:
             # This bypasses apply_taper() in channel_gain, so taper selector
             # does not affect the simulation — slider position IS the alpha.
             v_alpha = (p["vol_pct"] / 100.0) if not shared_vol else (master_pct / 100.0)
-            if t == "tone1":   t_alpha = tone1_pct / 100.0
+            if not shared_vol:
+                # HH: per-pickup tone slider stored in p["tone_pct"]
+                t_alpha = p["tone_pct"] / 100.0
+            elif t == "tone1": t_alpha = tone1_pct / 100.0
             elif t == "tone2": t_alpha = tone2_pct / 100.0
             else:              t_alpha = 1.0
 
@@ -391,15 +394,15 @@ class GuitarSim:
             self.state.audio_token = (self.state.audio_token or 0) + 1
             self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
 
-            # Audio FR: electronics sweep WITH position comb, normalised to
-            # wide-open reference WITHOUT comb. Shows how the current vol/tone/wiring
-            # settings shape the signal at this string position — different from the
-            # electronics chart (which has no comb) and responds to vol/tone changes.
-            ref_open   = sweep(self._make_ref_params(), active, cable,
-                               self.state.wiring, R_amp=r_amp, include_position=False)
-            anchor     = float(np.max(ref_open)) or 1.0
-            audio_db   = [round(float(20*np.log10(np.clip(v/anchor, 1e-9, None))), 2)
-                          for v in resp]   # resp already has comb + current vol/tone
+            # Audio FR: current electronics response, self-normalised to its own peak.
+            # This shows the *shape* — resonant peak position and tone rolloff —
+            # independently of the reference. Freeze with "Set ref" then change
+            # settings and pluck again to compare shapes directly.
+            resp_nopos = sweep(pus, active, cable, self.state.wiring,
+                               R_amp=r_amp, include_position=False)
+            peak     = float(np.max(resp_nopos)) or 1.0
+            audio_db = [round(float(20*np.log10(np.clip(v/peak, 1e-9, None))), 2)
+                        for v in resp_nopos]
             self.state.chart_audio = audio_db
 
         except Exception as e:
