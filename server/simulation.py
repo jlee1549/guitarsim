@@ -153,11 +153,21 @@ def channel_gain(
     Y_amp   = np.full(len(freqs), 1.0 / R_amp, dtype=complex)
 
     if wiring == "50s":
-        # Rv2=0 means wiper at ground → infinite shunt (dead short at output)
-        Y_shunt  = (1/Rv2 if Rv2 > 0 else 1e12) + Y_tone + Y_cable + Y_bleed + Y_amp
-        Z_load   = 1.0 / Y_shunt
-        Z_denom  = Zs + Rv1 + Z_load
-        gain     = np.abs(Z_load) / np.abs(Z_denom)
+        # 50s wiring: tone cap shunts at vol pot wiper (Rv2 node).
+        # Two-stage model:
+        #   Stage 1: pickup Zs drives into (Rv2 || Y_tone || Y_cable || Y_amp)
+        #            → gives voltage at wiper relative to amp input
+        #   Stage 2: wiper is attenuated by Rv1 series with the parallel combo
+        # This preserves the pickup resonance at all vol settings.
+        Y_ext    = Y_tone + Y_cable + Y_bleed + Y_amp   # everything hanging off wiper
+        Y_ext   += (1.0/Rv2 if Rv2 > 0 else 1e12)       # Rv2 to ground
+        Z_ext    = 1.0 / Y_ext
+        # Voltage at wiper node (Thevenin source into Z_ext):
+        v_wiper  = np.abs(Z_ext) / np.abs(Zs + Z_ext)
+        # Attenuation from wiper to output (Rv1 series divider):
+        Rv2_eff  = (Rv2 * Z_ext) / (Rv2 + Z_ext) if Rv2 > 0 else Z_ext
+        att      = np.abs(Rv2_eff) / np.abs(Rv1 + Rv2_eff) if Rv1 > 0 else np.ones(len(freqs))
+        gain     = v_wiper * att
     else:
         # Modern: tone shunts at input lug
         Y_input  = (1/pu.Rvol) + Y_tone + Y_bleed

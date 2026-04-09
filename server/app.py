@@ -251,6 +251,16 @@ class GuitarSim:
                 vol_alpha=1.0, tone_alpha=1.0))
         return result
 
+    def _make_tone_open_params(self):
+        """Same as _make_params() but tone wide open — isolates tone pot effect in audio FR."""
+        base = self._make_params()
+        result = []
+        for p in base:
+            import dataclasses
+            result.append(dataclasses.replace(p,
+                tone_knob=10.0, tone_alpha=1.0))
+        return result
+
     def _compute_and_push(self):
         self._pull_pu_state()
         cable  = self.state.ccable_pf * 1e-12
@@ -374,57 +384,22 @@ class GuitarSim:
             resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
-            wav     = render_pluck(resp, string_idx=si,
-                                   pluck_pos=self.state.pluck_pos/100.0,
-                                   reference_gain=ref_gain)
-            # Render reference WAV (open electronics) for audio FR normalisation
-            wav_ref = render_pluck(ref, string_idx=si,
-                                   pluck_pos=self.state.pluck_pos/100.0,
-                                   reference_gain=1.0)
+            wav = render_pluck(resp, string_idx=si,
+                               pluck_pos=self.state.pluck_pos/100.0,
+                               reference_gain=ref_gain)
             self.state.audio_b64   = base64.b64encode(wav).decode()
             self.state.audio_token = (self.state.audio_token or 0) + 1
             self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
 
-            # Compute audio frequency response from the rendered WAV.
-            # Parse 16-bit PCM (skip 44-byte WAV header), FFT the first ~0.5s
-            # (attack transient captures the full harmonic spectrum), map onto
-            # the same log-frequency axis as the electronics chart, and push
-            # as chart_audio so the chart can show a third overlay line.
-            import struct, io, wave as wavemod
-            import io as _io, wave as wavemod
-            def pcm_from_wav(w):
-                with wavemod.open(_io.BytesIO(w)) as wf:
-                    sr_ = wf.getframerate()
-                    raw = wf.readframes(wf.getnframes())
-                return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0, sr_
-
-            pcm,     sr  = pcm_from_wav(wav)
-            pcm_ref, _   = pcm_from_wav(wav_ref)
-
-            # FFT both signals over the same 150ms attack window
-            n_att = min(len(pcm), len(pcm_ref), int(sr * 0.15))
-            win   = np.hanning(n_att)
-            N     = max(n_att, 65536)
-            spec     = np.abs(np.fft.rfft(pcm[:n_att]     * win, n=N))
-            spec_ref = np.abs(np.fft.rfft(pcm_ref[:n_att] * win, n=N))
-            freqs_fft = np.fft.rfftfreq(N, 1.0/sr)
-
-            # Ratio: current / reference cancels the string spectrum,
-            # leaving only the electronics shaping (vol, tone, wiring).
-            # Smooth with adaptive 1/3-octave + 2-harmonic min window.
-            f0_hz    = OPEN_STRINGS[si]
-            audio_db = []
-            for fc in FREQS:
-                oct_lo = fc / (2 ** (1/6))
-                oct_hi = fc * (2 ** (1/6))
-                lo = max(20.0, min(oct_lo, fc - 1.5*f0_hz))
-                hi = max(oct_hi, fc + 1.5*f0_hz)
-                mask = (freqs_fft >= lo) & (freqs_fft <= hi)
-                cur_val = np.mean(spec[mask])     if mask.any() else 1e-12
-                ref_val = np.mean(spec_ref[mask]) if mask.any() else 1e-12
-                ratio   = cur_val / (ref_val + 1e-12)
-                audio_db.append(round(float(20 * np.log10(ratio + 1e-12)), 2))
-
+            # Audio FR: electronics sweep WITH position comb, normalised to
+            # wide-open reference WITHOUT comb. Shows how the current vol/tone/wiring
+            # settings shape the signal at this string position — different from the
+            # electronics chart (which has no comb) and responds to vol/tone changes.
+            ref_open   = sweep(self._make_ref_params(), active, cable,
+                               self.state.wiring, R_amp=r_amp, include_position=False)
+            anchor     = float(np.max(ref_open)) or 1.0
+            audio_db   = [round(float(20*np.log10(np.clip(v/anchor, 1e-9, None))), 2)
+                          for v in resp]   # resp already has comb + current vol/tone
             self.state.chart_audio = audio_db
 
         except Exception as e:

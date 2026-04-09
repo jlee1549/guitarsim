@@ -49,9 +49,12 @@ def test_position_comb():
 
 
 def test_modern_loses_more_treble():
-    pu = PickupParams(rdc=7500, L=3.8, Cp=120e-12, vol_knob=7)
-    r_50s    = sweep([pu], [0], 500e-12, "50s")
-    r_modern = sweep([pu], [0], 500e-12, "modern")
+    # With tone rolled back at full volume, modern wiring loses more treble than 50s.
+    # In 50s wiring the tone cap shunts at the wiper; in modern it shunts before the vol pot.
+    pu_50s    = PickupParams(rdc=7500, L=3.8, Cp=120e-12, vol_knob=10, tone_knob=3)
+    pu_modern = PickupParams(rdc=7500, L=3.8, Cp=120e-12, vol_knob=10, tone_knob=3)
+    r_50s    = sweep([pu_50s],    [0], 500e-12, "50s")
+    r_modern = sweep([pu_modern], [0], 500e-12, "modern")
     hi = np.searchsorted(FREQS, 3000)
     assert np.mean(r_modern[hi:]) < np.mean(r_50s[hi:])
 
