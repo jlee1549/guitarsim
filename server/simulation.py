@@ -189,7 +189,8 @@ def sweep(
     wiring: str,
     include_position: bool = True,
     R_amp: float = 1e6,
-    f0: float = 0.0,   # string fundamental for per-string comb velocity; 0 = use default
+    f0: float = 0.0,
+    freqs: np.ndarray = None,   # custom frequency grid; defaults to FREQS
 ) -> np.ndarray:
     """
     Combined frequency response for active pickups (parallel Thévenin combination).
@@ -208,7 +209,7 @@ def sweep(
     drop that produces the characteristic "scooped" tone — this falls out
     naturally from the Thévenin parallel combination.
     """
-    freqs = FREQS
+    freqs = FREQS if freqs is None else freqs
 
     if len(active) == 1:
         pu   = pickups[active[0]]

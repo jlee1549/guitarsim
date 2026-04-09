@@ -394,15 +394,26 @@ class GuitarSim:
             self.state.audio_token = (self.state.audio_token or 0) + 1
             self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
 
-            # Audio FR: current electronics response, self-normalised to its own peak.
-            # This shows the *shape* — resonant peak position and tone rolloff —
-            # independently of the reference. Freeze with "Set ref" then change
-            # settings and pluck again to compare shapes directly.
-            resp_nopos = sweep(pus, active, cable, self.state.wiring,
-                               R_amp=r_amp, include_position=False)
-            peak     = float(np.max(resp_nopos)) or 1.0
-            audio_db = [round(float(20*np.log10(np.clip(v/peak, 1e-9, None))), 2)
-                        for v in resp_nopos]
+            # Audio FR: dense-grid sweep with position comb, band-averaged to FREQS.
+            # Use 4000 points so comb nulls are properly resolved before downsampling.
+            # Band-average with 1/3-octave windows to smooth without hiding real notches.
+            DENSE = np.logspace(np.log10(50), np.log10(20000), 4000)
+            resp_dense = sweep(pus, active, cable, self.state.wiring,
+                               R_amp=r_amp, f0=f0, include_position=True,
+                               freqs=DENSE)
+            ref_dense  = sweep(self._make_ref_params(), active, cable,
+                               self.state.wiring, R_amp=r_amp,
+                               include_position=False, freqs=DENSE)
+            # Ratio: removes pickup-level offset, keeps vol/tone/comb shaping
+            ratio_dense = resp_dense / (ref_dense + 1e-12)
+            # Band-average onto FREQS with 1/3-octave windows
+            audio_db = []
+            for fc in FREQS:
+                lo   = fc / (2 ** (1/6))
+                hi   = fc * (2 ** (1/6))
+                mask = (DENSE >= lo) & (DENSE <= hi)
+                val  = np.mean(ratio_dense[mask]) if mask.any() else 1e-9
+                audio_db.append(round(float(20 * np.log10(max(val, 1e-9))), 2))
             self.state.chart_audio = audio_db
 
         except Exception as e:
