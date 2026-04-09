@@ -429,10 +429,6 @@ class GuitarSim:
             peak_db = max(audio_db)
             audio_db = [round(v - peak_db, 2) for v in audio_db]
             self.state.chart_audio = audio_db
-            # On first pluck, auto-set as reference so there's always something to compare
-            if not self.state.chart_audio_ref:
-                self.state.chart_audio_ref = audio_db
-                self.state.audio_ref_label = f"ref: {STRING_NAMES[si]}"
 
         except Exception as e:
             self.state.status_msg = f"error: {e}"
@@ -489,8 +485,8 @@ function initChart(){
     data:{datasets:[
       {label:'electronics',data:[],borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3},
       {label:'ref (open)',data:[],borderColor:'#888',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,3]},
-      {label:'audio FR',data:[],borderColor:'#E8A838',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[3,3]},
-      {label:'audio ref',data:[],borderColor:'#E8A838',borderWidth:1,pointRadius:0,tension:0.3,borderDash:[8,4],borderOpacity:0.4}
+      {label:'audio FR',data:[],borderColor:'#4CAF50',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[3,3]},
+      {label:'audio ref',data:[],borderColor:'#E8A838',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,2]}
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:20,font:{size:11}}},
