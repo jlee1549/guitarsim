@@ -126,6 +126,43 @@ def ks_string(
     return np.clip(out, -2.0, 2.0).astype(np.float32)
 
 
+def apply_inharmonicity(signal: np.ndarray, f0: float, B: float,
+                         sr: int = SAMPLE_RATE) -> np.ndarray:
+    """
+    Model magnetic inharmonicity / 'stratitis' from close pickup height.
+    The physical effect (negative spring stiffness) causes harmonics to go sharp
+    relative to the fundamental. The perceptual result is beating between harmonics
+    that creates a chorus/warbly quality.
+
+    Modelled as: mix the signal with a pitch-shifted copy (shift ∝ √B).
+    The pitch shift is small (few cents) creating inter-harmonic beating that grows
+    with harmonic number — matching the n² inharmonicity law.
+    B=0: no effect. B=0.0003: subtle (h≈2mm). B=0.003: audible (h≈1.5mm).
+    """
+    if B <= 0 or len(signal) < 2:
+        return signal
+    # Pitch shift in cents: δ_cents ≈ 600*B (heuristic from n²B law avg over H1-H8)
+    # At B=0.003: δ≈1.8 cents — creates slow beating on upper harmonics
+    delta_cents = 600.0 * B
+    if delta_cents < 0.1:
+        return signal
+    ratio = 2.0 ** (delta_cents / 1200.0)
+    # Resample signal to create pitched-up copy
+    N      = len(signal)
+    t_orig = np.arange(N, dtype=np.float64)
+    t_new  = t_orig / ratio
+    idx    = np.clip(t_new, 0, N - 1.001)
+    i0     = idx.astype(int)
+    frac   = idx - i0
+    sig_f  = signal.astype(np.float64)
+    shifted = sig_f[i0] * (1 - frac) + sig_f[np.clip(i0 + 1, 0, N-1)] * frac
+    # Mix: original + small amount of shifted copy
+    # Mix level scales with B (more inharmonicity = more audible beating)
+    mix = np.clip(delta_cents / 10.0, 0.0, 0.5)
+    result = (1.0 - mix) * sig_f + mix * shifted
+    return result.astype(np.float32)
+
+
 def body_eq(signal: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     nyq  = sr / 2.0
     sos1 = butter(2, [150/nyq, 210/nyq], btype='band', output='sos')
@@ -164,6 +201,7 @@ def render_pluck(
     string_idx: int = 1,
     pluck_pos: float = DEFAULT_PLUCK_POS,
     reference_gain: float = 1.0,
+    inharmonicity_B: float = 0.0,
     sr: int = SAMPLE_RATE,
 ) -> bytes:
     f0    = OPEN_STRINGS[string_idx]
@@ -176,6 +214,10 @@ def render_pluck(
     n_samples = int(np.ceil(sr * NOTE_DUR_S))
 
     sig = ks_string(f0, t60, stiff, pluck_pos, n_samples, sr, loss_factor=loss)
+
+    # Magnetic inharmonicity from close pickup height: shift harmonics sharp
+    if inharmonicity_B > 0:
+        sig = apply_inharmonicity(sig, f0, inharmonicity_B, sr)
 
     sig -= sig.mean()
     sos_hp = butter(2, 20.0/(sr/2.0), btype='high', output='sos')

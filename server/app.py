@@ -406,9 +406,20 @@ class GuitarSim:
             resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
+            # Magnetic inharmonicity from pickup height.
+            # B_magnetic = K_MAG/h³ − K_MAG/h_ref³, zero below reference height.
+            # Calibrated: h=1mm → B≈0.004 (audible chorus), h=2mm → B≈0.0003 (subtle).
+            # Uses the closest active pickup to the string (lowest height_mm).
+            K_MAG = 0.004 * (1.5 ** 3)   # gives B=0.004 at h=1.5mm, ≈0 at h≥2.5mm
+            H_REF = 2.5
+            inh_B = 0.0
+            for idx in active:
+                h = float(self._pu_data[idx].get("height_mm", H_REF))
+                b = max(0.0, K_MAG / max(h, 0.5)**3 - K_MAG / H_REF**3)
+                inh_B = max(inh_B, b)   # worst-case pickup dominates
             wav = render_pluck(resp, string_idx=si,
-                               pluck_pos=self.state.pluck_pos/100.0,
-                               reference_gain=ref_gain)
+                               reference_gain=ref_gain,
+                               inharmonicity_B=inh_B)
             self.state.audio_b64   = base64.b64encode(wav).decode()
             self.state.audio_token = (self.state.audio_token or 0) + 1
             self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
