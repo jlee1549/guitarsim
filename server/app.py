@@ -56,7 +56,7 @@ def _default_pu(pos, ptype):
             "vol_knob":10.0,"tone_knob":10.0,
             "vol_pct":100.0,"tone_pct":100.0,
             "polarity":1, "coil_config":"series", "coil_side":"outer",
-            "dist_mm":dp["dist_mm"],"tbleed":"none","has_tone":True}
+            "dist_mm":dp["dist_mm"],"height_mm":2.5,"tbleed":"none","has_tone":True}
 
 @TrameApp()
 class GuitarSim:
@@ -139,6 +139,7 @@ class GuitarSim:
             setattr(self.state,f"pu{i}_rtone",       p["Rtone"])
             setattr(self.state,f"pu{i}_ctone_nf",    p["Ctone_nf"])
             setattr(self.state,f"pu{i}_dist_mm",     p["dist_mm"])
+            setattr(self.state,f"pu{i}_height_mm",   p["height_mm"])
             setattr(self.state,f"pu{i}_tbleed",      p["tbleed"])
             setattr(self.state,f"pu{i}_polarity",    p["polarity"])
             setattr(self.state,f"pu{i}_coil_config", p["coil_config"])
@@ -163,6 +164,7 @@ class GuitarSim:
             self._pu_data[i]["Rtone"]        = getattr(self.state,f"pu{i}_rtone",   500000)
             self._pu_data[i]["Ctone_nf"]     = getattr(self.state,f"pu{i}_ctone_nf",22)
             self._pu_data[i]["dist_mm"]      = getattr(self.state,f"pu{i}_dist_mm", 80)
+            self._pu_data[i]["height_mm"]    = getattr(self.state,f"pu{i}_height_mm", 2.5)
             self._pu_data[i]["tbleed"]       = getattr(self.state,f"pu{i}_tbleed",  "none")
             # Apply coil config scaling from measured GuitarFreak data.
             # PAF Pro measured: series(rdc=9687,L=4.318,Cp=120) vs
@@ -233,6 +235,12 @@ class GuitarSim:
             # This bypasses apply_taper() in channel_gain, so taper selector
             # does not affect the simulation — slider position IS the alpha.
             v_alpha = (p["vol_pct"] / 100.0) if not shared_vol else (master_pct / 100.0)
+            # Pickup height: output scales as (ref/h)^2 (inverse-square law).
+            # Reference height 2.5mm. Multiply into vol_alpha so it scales
+            # the pickup's contribution to the mix the same way height does on a real guitar.
+            h = float(p.get("height_mm", 2.5))
+            height_gain = (2.5 / max(h, 0.5)) ** 2
+            v_alpha = min(1.0, v_alpha * height_gain)
             if not shared_vol:
                 # HH: per-pickup tone slider stored in p["tone_pct"]
                 t_alpha = p["tone_pct"] / 100.0
@@ -348,7 +356,7 @@ class GuitarSim:
 
     def _make_pu_watcher(self, i):
         keys = [f"pu{i}_vol",f"pu{i}_tone",f"pu{i}_rvol",f"pu{i}_rtone",
-                f"pu{i}_ctone_nf",f"pu{i}_dist_mm",f"pu{i}_tbleed",
+                f"pu{i}_ctone_nf",f"pu{i}_dist_mm",f"pu{i}_height_mm",f"pu{i}_tbleed",
                 f"pu{i}_polarity",f"pu{i}_coil_config",f"pu{i}_coil_side"]
         @self.state.change(*keys)
         def _watch(**_): self._compute_and_push()
@@ -693,6 +701,8 @@ document.head.appendChild(sc);
                 html.Div("Position",classes="text-caption text-uppercase text-medium-emphasis")
                 html.Div(f"Dist from bridge: {{{{ {p}dist_mm }}}} mm",classes="text-caption text-medium-emphasis")
                 v.VSlider(v_model=(f"{p}dist_mm",),min=5,max=320,step=1,hide_details=True,color="success")
+                html.Div(f"Height from strings: {{{{ {p}height_mm }}}} mm",classes="text-caption text-medium-emphasis mt-1")
+                v.VSlider(v_model=(f"{p}height_mm",),min=1.0,max=8.0,step=0.5,hide_details=True,color="success")
                 v.VDivider(classes="my-2")
                 v.VSelect(v_model=(f"{p}tbleed",),items=(TBLEED_ITEMS,),label="Treble bleed",density="compact",hide_details=True)
 
