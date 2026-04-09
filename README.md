@@ -89,17 +89,22 @@ middle pluck (p=0.5) kills all even harmonics.
 
 ## Key physics captured
 
-- **HH blend cancellation** — partial RWRP cancellation between pickups creates a notch
-  at `f = v / (2 × pickup_separation)`. For standard HH (132 mm separation), this falls
-  around 500 Hz on A2, 1.6 kHz on E4 — the "wah" vowel formant guitarists chase by
-  blending pickups with the neck volume slightly rolled back.
-- **Tone asymmetry in mix** — neck pickup tone has more audible effect in the mix than
-  bridge tone at equal settings, because the neck comb emphasizes frequencies (500 Hz,
-  3 kHz) where the ear is more sensitive. At low neck volume, bridge tone becomes more
-  dominant — models the real-world observation that neck height and volume affect which
-  tone pot has more leverage.
-- **Treble loss on volume rollback** — the vol pot series resistance (Rv1) at mid-position
-  decouples the tone cap from the signal; 50s wiring reduces this effect.
+- **Two-pickup phasor cancellation** — for two pickups with position combs
+  `sin(π·f·2d/v)`, partial cancellation occurs at frequencies where the combs have
+  opposite sign. A notch appears near `f = v / (2·Δd)` where `Δd` is the pickup
+  separation. For standard HH (neck at 170 mm, bridge at 38 mm, Δd = 132 mm) this
+  falls at ~523 Hz for A2 (v = 138 m/s) and ~1568 Hz for E4 (v = 414 m/s). Depth
+  is controlled by the relative vol_alpha of the two pickups.
+- **Tone pot effectiveness in a two-source mix** — each pickup's tone pot shunts only
+  its own source. In the combined output, the effective treble cut from pickup i's tone
+  pot is weighted by that pickup's contribution to the mix at each frequency. The
+  neck pickup's comb pattern emphasises different frequencies than the bridge; the
+  perceptual prominence of each tone pot therefore depends on pickup position, pickup
+  height, and volume setting.
+- **Vol pot series resistance and tone decoupling** — at wiper position α, Rv1 = R·(1−α)
+  appears in series with the pickup source. The tone cap shunt admittance must overcome
+  this series impedance; at low α (low volume) the tone cap becomes less effective.
+  50s wiring places the tone shunt downstream of the wiper, partially mitigating this.
 
 ## License
 
