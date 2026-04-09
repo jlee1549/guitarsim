@@ -38,7 +38,13 @@ def _toggle_options(n):
 
 def _default_pu(pos, ptype):
     db  = PICKUPS[ptype]; dp = POSITION_DEFAULTS.get(pos,{"dist_mm":80,"scale_mm":628})
+    # Pick a position-appropriate default preset: prefer one whose name contains
+    # the position keyword (neck/bridge/middle). Fall back to first preset.
     entry = db[0]
+    for candidate in db:
+        if pos in candidate["name"].lower():
+            entry = candidate
+            break
     return {"pos":pos,"type":ptype,
             "rdc":entry["rdc"],"L":entry["L"],"Cp":entry["Cp"],
             "base_rdc":entry["rdc"],"base_L":entry["L"],"base_Cp":entry["Cp"],
