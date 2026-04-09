@@ -374,9 +374,13 @@ class GuitarSim:
             resp   = sweep(pus, active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref    = sweep(self._make_ref_params(), active, cable, self.state.wiring, R_amp=r_amp, f0=f0)
             ref_gain = float(np.max(resp))/(float(np.max(ref)) or 1.0)
-            wav = render_pluck(resp, string_idx=si,
-                               pluck_pos=self.state.pluck_pos/100.0,
-                               reference_gain=ref_gain)
+            wav     = render_pluck(resp, string_idx=si,
+                                   pluck_pos=self.state.pluck_pos/100.0,
+                                   reference_gain=ref_gain)
+            # Render reference WAV (open electronics) for audio FR normalisation
+            wav_ref = render_pluck(ref, string_idx=si,
+                                   pluck_pos=self.state.pluck_pos/100.0,
+                                   reference_gain=1.0)
             self.state.audio_b64   = base64.b64encode(wav).decode()
             self.state.audio_token = (self.state.audio_token or 0) + 1
             self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
@@ -387,47 +391,40 @@ class GuitarSim:
             # the same log-frequency axis as the electronics chart, and push
             # as chart_audio so the chart can show a third overlay line.
             import struct, io, wave as wavemod
-            with wavemod.open(io.BytesIO(wav)) as wf:
-                sr  = wf.getframerate()
-                raw = wf.readframes(wf.getnframes())
-            pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
-            pcm = pcm / (32768.0 + 1e-9)
+            import io as _io, wave as wavemod
+            def pcm_from_wav(w):
+                with wavemod.open(_io.BytesIO(w)) as wf:
+                    sr_ = wf.getframerate()
+                    raw = wf.readframes(wf.getnframes())
+                return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0, sr_
 
-            # Use first 150ms: enough for harmonics to establish while still
-            # capturing the attack character before high harmonics decay away.
-            n_attack = min(len(pcm), int(sr * 0.15))
-            window   = np.hanning(n_attack)
-            seg      = pcm[:n_attack] * window
-            N        = max(n_attack, 65536)   # zero-pad for finer freq resolution
-            spec     = np.abs(np.fft.rfft(seg, n=N))
+            pcm,     sr  = pcm_from_wav(wav)
+            pcm_ref, _   = pcm_from_wav(wav_ref)
+
+            # FFT both signals over the same 150ms attack window
+            n_att = min(len(pcm), len(pcm_ref), int(sr * 0.15))
+            win   = np.hanning(n_att)
+            N     = max(n_att, 65536)
+            spec     = np.abs(np.fft.rfft(pcm[:n_att]     * win, n=N))
+            spec_ref = np.abs(np.fft.rfft(pcm_ref[:n_att] * win, n=N))
             freqs_fft = np.fft.rfftfreq(N, 1.0/sr)
 
-            # Psychoacoustic smoothing: 1/3-octave but minimum window = 2 harmonics.
-            # This bridges the gaps between harmonics so we see the pickup resonance
-            # envelope rather than individual harmonic spikes.
-            f0_hz   = OPEN_STRINGS[si]       # fundamental of played string
+            # Ratio: current / reference cancels the string spectrum,
+            # leaving only the electronics shaping (vol, tone, wiring).
+            # Smooth with adaptive 1/3-octave + 2-harmonic min window.
+            f0_hz    = OPEN_STRINGS[si]
             audio_db = []
-            peak_spec = np.max(spec) + 1e-12
             for fc in FREQS:
-                # 1/3-octave half-width, but at least 1 harmonic spacing wide
                 oct_lo = fc / (2 ** (1/6))
                 oct_hi = fc * (2 ** (1/6))
-                # Minimum: catch ±1.5 harmonics around fc
-                min_lo = fc - 1.5 * f0_hz
-                min_hi = fc + 1.5 * f0_hz
-                lo = min(oct_lo, min_lo)
-                hi = max(oct_hi, min_hi)
-                lo = max(lo, 20.0)
+                lo = max(20.0, min(oct_lo, fc - 1.5*f0_hz))
+                hi = max(oct_hi, fc + 1.5*f0_hz)
                 mask = (freqs_fft >= lo) & (freqs_fft <= hi)
-                band_val = np.mean(spec[mask]) if mask.any() else 1e-12
-                audio_db.append(float(20 * np.log10(band_val / peak_spec + 1e-12)))
-                mask = (freqs_fft >= lo) & (freqs_fft <= hi)
-                band_val = np.mean(spec[mask]) if mask.any() else 1e-12
-                audio_db.append(float(20 * np.log10(band_val / peak_spec + 1e-12)))
+                cur_val = np.mean(spec[mask])     if mask.any() else 1e-12
+                ref_val = np.mean(spec_ref[mask]) if mask.any() else 1e-12
+                ratio   = cur_val / (ref_val + 1e-12)
+                audio_db.append(round(float(20 * np.log10(ratio + 1e-12)), 2))
 
-            # Normalise so peak = 0 dB (matching chart_cur convention)
-            peak_db = max(audio_db)
-            audio_db = [round(v - peak_db, 2) for v in audio_db]
             self.state.chart_audio = audio_db
 
         except Exception as e:
