@@ -378,14 +378,14 @@ class GuitarSim:
                 setattr(self.state, f"pu{i}_coil_config", "series")
             self._compute_and_push()
 
-    def set_audio_ref(self):
+    def set_audio_ref(self, *args, **kwargs):
         """Freeze current audio FR as the reference for comparison."""
         if self.state.chart_audio:
             self.state.chart_audio_ref = list(self.state.chart_audio)
             si = int(self.state.pluck_string)
             self.state.audio_ref_label = f"ref: {STRING_NAMES[si]}"
 
-    def pluck(self):
+    def pluck(self, *args, **kwargs):
         self.state.busy = True; self.state.status_msg = "rendering..."
         try:
             self._pull_pu_state()
