@@ -38,8 +38,11 @@ def _toggle_options(n):
 
 def _default_pu(pos, ptype):
     db  = PICKUPS[ptype]; dp = POSITION_DEFAULTS.get(pos,{"dist_mm":80,"scale_mm":628})
-    return {"pos":pos,"type":ptype,"rdc":db[0]["rdc"],"L":db[0]["L"],"Cp":db[0]["Cp"],
-            "base_rdc":db[0]["rdc"],"base_L":db[0]["L"],"base_Cp":db[0]["Cp"],
+    entry = db[0]
+    return {"pos":pos,"type":ptype,
+            "rdc":entry["rdc"],"L":entry["L"],"Cp":entry["Cp"],
+            "base_rdc":entry["rdc"],"base_L":entry["L"],"base_Cp":entry["Cp"],
+            "Rd": entry.get("Rd", 0.0), "Ld": entry.get("Ld", 0.0),
             "Rvol":500000,"Rtone":500000,"Ctone_nf":22,
             "vol_knob":10.0,"tone_knob":10.0,
             "vol_pct":100.0,"tone_pct":100.0,
@@ -103,7 +106,9 @@ class GuitarSim:
         self.state.chart_freqs  = self._freqs
         self.state.chart_cur    = [0.0]*len(FREQS)
         self.state.chart_ref    = [0.0]*len(FREQS)
-        self.state.chart_audio  = []
+        self.state.chart_audio      = []
+        self.state.chart_audio_ref  = []
+        self.state.audio_ref_label  = ""
         self.state.chart_stats  = {"peak":0,"db200":0.0,"db500":0.0,"db1k":0.0,"db4k":0.0}
         self.state.chart_note   = ""
 
@@ -231,6 +236,7 @@ class GuitarSim:
                 tbleed=p["tbleed"], has_tone=has_tone,
                 vol_alpha=v_alpha, tone_alpha=t_alpha if has_tone else -1.0,
                 polarity=p["polarity"],
+                Rd_ohm=p.get("Rd", 0.0), Ld_H=p.get("Ld", 0.0),
             ))
         return params
 
@@ -341,10 +347,19 @@ class GuitarSim:
                 self._pu_data[i]["rdc"]      = p["rdc"]
                 self._pu_data[i]["L"]        = p["L"]
                 self._pu_data[i]["Cp"]       = p["Cp"]
+                self._pu_data[i]["Rd"]       = p.get("Rd", 0.0)
+                self._pu_data[i]["Ld"]       = p.get("Ld", 0.0)
                 # Reset coil config to series when preset changes
                 self._pu_data[i]["coil_config"] = "series"
                 setattr(self.state, f"pu{i}_coil_config", "series")
             self._compute_and_push()
+
+    def set_audio_ref(self):
+        """Freeze current audio FR as the reference for comparison."""
+        if self.state.chart_audio:
+            self.state.chart_audio_ref = list(self.state.chart_audio)
+            si = int(self.state.pluck_string)
+            self.state.audio_ref_label = f"ref: {STRING_NAMES[si]}"
 
     def pluck(self):
         self.state.busy = True; self.state.status_msg = "rendering..."
@@ -403,6 +418,10 @@ class GuitarSim:
             peak_db = max(audio_db)
             audio_db = [round(v - peak_db, 2) for v in audio_db]
             self.state.chart_audio = audio_db
+            # On first pluck, auto-set as reference so there's always something to compare
+            if not self.state.chart_audio_ref:
+                self.state.chart_audio_ref = audio_db
+                self.state.audio_ref_label = f"ref: {STRING_NAMES[si]}"
 
         except Exception as e:
             self.state.status_msg = f"error: {e}"
@@ -459,7 +478,8 @@ function initChart(){
     data:{datasets:[
       {label:'electronics',data:[],borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3},
       {label:'ref (open)',data:[],borderColor:'#888',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,3]},
-      {label:'audio FR',data:[],borderColor:'#E8A838',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[3,3],hidden:false}
+      {label:'audio FR',data:[],borderColor:'#E8A838',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[3,3]},
+      {label:'audio ref',data:[],borderColor:'#E8A838',borderWidth:1,pointRadius:0,tension:0.3,borderDash:[8,4],borderOpacity:0.4}
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:20,font:{size:11}}},
@@ -474,19 +494,23 @@ function initChart(){
     }
   });
 }
-function updateChart(freqs,cur,ref,audio){
+function updateChart(freqs,cur,ref,audio,audioRef){
   if(!_chart) return;
   var allVals=cur.concat(ref).filter(isFinite);
   if(audio&&audio.length) allVals=allVals.concat(audio.filter(isFinite));
+  if(audioRef&&audioRef.length) allVals=allVals.concat(audioRef.filter(isFinite));
   var yMin=Math.floor((Math.min.apply(null,allVals)-3)/5)*5;
   var yMax=Math.ceil((Math.max.apply(null,allVals)+2)/5)*5;
   _chart.data.datasets[0].data=freqs.map(function(f,i){return{x:f,y:cur[i]};});
   _chart.data.datasets[1].data=freqs.map(function(f,i){return{x:f,y:ref[i]};});
   if(audio&&audio.length){
     _chart.data.datasets[2].data=freqs.map(function(f,i){return{x:f,y:audio[i]};});
-  } else {
-    _chart.data.datasets[2].data=[];
-  }
+  } else { _chart.data.datasets[2].data=[]; }
+  if(audioRef&&audioRef.length){
+    _chart.data.datasets[3].data=freqs.map(function(f,i){return{x:f,y:audioRef[i]};});
+    var refLabel=window.trame&&window.trame.state&&window.trame.state.state&&window.trame.state.state.audio_ref_label;
+    _chart.data.datasets[3].label=refLabel||'audio ref';
+  } else { _chart.data.datasets[3].data=[]; }
   _chart.options.scales.y.min=yMin; _chart.options.scales.y.max=yMax;
   _chart.update('none');
 }
@@ -497,7 +521,7 @@ function poll(){
     var s=window.trame&&window.trame.state&&window.trame.state.state;
     if(s){
       // Chart
-      if(s.chart_cur&&s.chart_freqs) updateChart(s.chart_freqs,s.chart_cur,s.chart_ref||[],s.chart_audio||[]);
+      if(s.chart_cur&&s.chart_freqs) updateChart(s.chart_freqs,s.chart_cur,s.chart_ref||[],s.chart_audio||[],s.chart_audio_ref||[]);
       // Audio — only play when token changes
       var tok=s.audio_token||0;
       if(tok!==_lastToken&&tok>0&&s.audio_b64){
@@ -578,6 +602,11 @@ document.head.appendChild(sc);
                             v.VSlider(v_model=("pluck_pos",),min=3,max=45,step=1,hide_details=True)
                         with v.VCol(cols="auto"):
                             v.VBtn("Pluck",prepend_icon="mdi-music-note",color="primary",variant="outlined",loading=("busy",),click=self.pluck)
+                            v.VBtn("Set ref",size="small",variant="text",color="warning",
+                                   click=self.set_audio_ref,
+                                   v_show="chart_audio.length>0",
+                                   title="Freeze current audio FR as reference for comparison",
+                                   classes="ml-1")
                         with v.VCol():
                             html.Div("{{ status_msg }}",classes="text-caption text-medium-emphasis")
 

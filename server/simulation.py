@@ -51,9 +51,17 @@ class PickupParams:
     vol_alpha: float  = -1.0
     tone_alpha: float = -1.0
     # Polarity: +1 = normal, -1 = reversed (RWRP or out-of-phase wiring).
-    # Multiplies the phasor contribution in sweep() — only audible in
-    # multi-pickup combinations.
     polarity: int = 1
+    # Eddy current loss model (GuitarFreak Rd/Ld parameters).
+    # Models the damping effect of metal covers, baseplates, and pole pieces.
+    # Rd_ohm: parallel resistance (higher = less damping). 0 = disabled.
+    # Ld_H:   series inductance forming the RL shunt with Rd.
+    # Effect: shunts high frequencies, softening the resonant peak.
+    # Typical values — uncovered HB: Rd=200-300kΩ, Ld=9-20H
+    #                  covered HB:   Rd=150-250kΩ, Ld=9-20H (slightly more damping)
+    #                  SC (alnico):  Rd=400-600kΩ, Ld=10-15H (less metal, less eddy)
+    Rd_ohm: float = 0.0   # 0 = no eddy current model
+    Ld_H:   float = 0.0
 
 def apply_taper(knob: float, taper: str) -> float:
     alpha = knob / 10.0
@@ -69,12 +77,18 @@ def apply_taper(knob: float, taper: str) -> float:
 
 
 def pickup_source_z(freqs: np.ndarray, pu: PickupParams) -> np.ndarray:
-    """RLC pickup source impedance (parallel Cp across series Rdc+jωL)."""
+    """RLC pickup source impedance with optional eddy current shunt."""
     w  = 2 * np.pi * freqs
     Zs = pu.rdc + 1j * w * pu.L
     if pu.Cp > 0:
         Yp = 1.0/Zs + 1j*w*pu.Cp
-        return 1.0 / Yp
+        Zs = 1.0 / Yp
+    # Eddy current loss: parallel RL shunt (Rd in series with Ld, paralleling Zs)
+    # Models damping from metal covers/baseplates. At high freq, jwLd dominates
+    # and shunts the pickup, softening the resonant peak.
+    if pu.Rd_ohm > 0 and pu.Ld_H > 0:
+        Z_eddy = pu.Rd_ohm + 1j * w * pu.Ld_H
+        Zs = (Zs * Z_eddy) / (Zs + Z_eddy)
     return Zs
 
 

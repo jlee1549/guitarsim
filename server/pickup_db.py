@@ -27,29 +27,36 @@ PICKUPS = {
         # ── Vintage / PAF style ──────────────────────────────────────────
         # Original PAF: ~7.5kΩ, ~4.5H neck / ~5.5H bridge (Seymour Duncan forums)
         {"name": "PAF neck (vintage A2)",
-         "rdc": 7500,  "L": 4.5,  "Cp": 100e-12},
+         "rdc": 7500,  "L": 4.5,  "Cp": 100e-12,
+         "Rd": 280000, "Ld": 12.0},   # uncovered, typical vintage
         {"name": "PAF bridge (vintage A2)",
-         "rdc": 8200,  "L": 5.0,  "Cp": 100e-12},
+         "rdc": 8200,  "L": 5.0,  "Cp": 100e-12,
+         "Rd": 280000, "Ld": 12.0},
 
         # Seth Lover Model (SD SH-55): measured by Darth Phineas
-        # Neck: 7.535kΩ, 3.733H  Bridge: 8.327kΩ, 4.612H
         {"name": "Seth Lover neck (A2, 8.14 kHz peak)",
-         "rdc": 7535,  "L": 3.733, "Cp": 110e-12},
+         "rdc": 7535,  "L": 3.733, "Cp": 110e-12,
+         "Rd": 300000, "Ld": 9.0},
         {"name": "Seth Lover bridge (A2, 5.9 kHz peak)",
-         "rdc": 8327,  "L": 4.612, "Cp": 130e-12},
+         "rdc": 8327,  "L": 4.612, "Cp": 130e-12,
+         "Rd": 300000, "Ld": 9.0},
 
-        # Alnico II Pro (SD APH-1): neck 7.6kΩ / 7.1kHz, bridge 7.85kΩ / 6.7kHz
-        # L derived: neck ~4.2H, bridge ~4.5H at Cp≈120pF
+        # Alnico II Pro (SD APH-1)
         {"name": "Alnico II Pro neck (7.1 kHz peak)",
-         "rdc": 7600,  "L": 4.2,  "Cp": 120e-12},
+         "rdc": 7600,  "L": 4.2,  "Cp": 120e-12,
+         "Rd": 290000, "Ld": 9.0},
         {"name": "Alnico II Pro bridge (6.7 kHz peak)",
-         "rdc": 7850,  "L": 4.5,  "Cp": 120e-12},
+         "rdc": 7850,  "L": 4.5,  "Cp": 120e-12,
+         "Rd": 290000, "Ld": 9.0},
 
-        # Gibson '57 Classic / Burstbucker style
-        {"name": "'57 Classic / Burstbucker neck",
-         "rdc": 7800,  "L": 4.8,  "Cp": 110e-12},
-        {"name": "'57 Classic / Burstbucker bridge",
-         "rdc": 8500,  "L": 5.2,  "Cp": 110e-12},
+        # Gibson '57 Classic — GuitarFreak measured Rd/Ld
+        # Uncovered: Rd=290kΩ, Ld=9H  Covered: Rd=220kΩ, Ld=9H
+        {"name": "'57 Classic uncovered (GF measured)",
+         "rdc": 8572,  "L": 5.256, "Cp": 117e-12,
+         "Rd": 290000, "Ld": 9.0},
+        {"name": "'57 Classic covered (GF measured)",
+         "rdc": 8752,  "L": 5.404, "Cp": 110e-12,
+         "Rd": 220000, "Ld": 9.0},   # cover adds ~30% more damping
 
         # ── Medium output / versatile ─────────────────────────────────────
         # SD Jazz (SH-2N): ~7.7kΩ neck, clean/warm
@@ -70,22 +77,25 @@ PICKUPS = {
          "rdc": 6500,  "L": 3.2,  "Cp": 80e-12},
 
         # ── Hot / high output ─────────────────────────────────────────────
-        # SD JB (SH-4): measured 16.2kΩ, 8.54H (guitarhacking) — very dark
-        # Resonant peak ~2.76kHz. Ceramic magnet version.
+        # SD JB (SH-4): measured 16.2kΩ, 8.54H (guitarhacking)
         {"name": "JB bridge (ceramic, 2.76 kHz peak)",
-         "rdc": 16200, "L": 8.54, "Cp": 150e-12},
+         "rdc": 16200, "L": 8.54, "Cp": 150e-12,
+         "Rd": 160000, "Ld": 15.0},   # heavily potted, significant damping
 
-        # SD Custom Custom: 14kΩ, 9.35H (Bedlam Guitars measured)
+        # SD Custom Custom: 14kΩ, 9.35H
         {"name": "Custom Custom bridge (A2)",
-         "rdc": 14000, "L": 9.35, "Cp": 150e-12},
+         "rdc": 14000, "L": 9.35, "Cp": 150e-12,
+         "Rd": 180000, "Ld": 12.0},
 
-        # SD Distortion (SH-6): ~13.4kΩ, ceramic, very hot
+        # SD Distortion (SH-6): ~13.4kΩ, ceramic
         {"name": "Distortion bridge (ceramic)",
-         "rdc": 13400, "L": 7.5,  "Cp": 160e-12},
+         "rdc": 13400, "L": 7.5,  "Cp": 160e-12,
+         "Rd": 170000, "Ld": 15.0},
 
-        # DiMarzio Super Distortion: ~13.6kΩ, classic high output
-        {"name": "Super Distortion bridge",
-         "rdc": 13600, "L": 7.8,  "Cp": 155e-12},
+        # DiMarzio Super Distortion: GF measured Rd=160kΩ, Ld=20H
+        {"name": "Super Distortion bridge (GF measured)",
+         "rdc": 16373, "L": 10.0, "Cp": 75e-12,
+         "Rd": 160000, "Ld": 20.0},
 
         # DiMarzio Tone Zone: ~16.6kΩ, very dark and warm
         {"name": "Tone Zone bridge (A5)",
