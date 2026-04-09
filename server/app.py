@@ -590,12 +590,15 @@ document.head.appendChild(sc);
                                 with v.VCardText():
                                     html.Div("Master volume: {{ master_vol.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
                                     v.VSlider(v_model=("master_vol",),min=0,max=100,step=1,hide_details=True,color="primary",classes="mb-2")
-                                    html.Div("Tone 1 (neck): {{ tone1_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("tone1_knob",),min=0,max=100,step=1,hide_details=True,color="secondary",classes="mb-2")
-                                    # Tone 2 only visible for SSS/HSS (has 2 tone pots)
-                                    with html.Div(v_show="tone_map.filter(t=>t==='tone2').length > 0"):
-                                        html.Div("Tone 2 (mid): {{ tone2_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                        v.VSlider(v_model=("tone2_knob",),min=0,max=100,step=1,hide_details=True,color="secondary")
+                                    # Global tone sliders only for shared-vol layouts (SSS, HSS, Tele).
+                                    # For HH (shared_vol=False) tone is per-pickup, shown in each card.
+                                    with html.Div(v_show="shared_vol"):
+                                        html.Div("Tone 1 (neck): {{ tone1_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
+                                        v.VSlider(v_model=("tone1_knob",),min=0,max=100,step=1,hide_details=True,color="secondary",classes="mb-2")
+                                        # Tone 2 only visible for SSS/HSS (has 2 tone pots)
+                                        with html.Div(v_show="tone_map.filter(t=>t==='tone2').length > 0"):
+                                            html.Div("Tone 2 (mid): {{ tone2_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
+                                            v.VSlider(v_model=("tone2_knob",),min=0,max=100,step=1,hide_details=True,color="secondary")
 
                     # Pluck controls
                     html.Div("Pluck",classes="text-caption text-uppercase text-medium-emphasis mb-1")
