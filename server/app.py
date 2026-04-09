@@ -393,23 +393,34 @@ class GuitarSim:
             pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
             pcm = pcm / (32768.0 + 1e-9)
 
-            # Use first 80ms for attack spectrum — this is where harmonic
-            # content is richest and pickup resonance differences are largest.
-            # Longer windows include decay which homogenises all pickups.
-            n_attack = min(len(pcm), int(sr * 0.08))
+            # Use first 150ms: enough for harmonics to establish while still
+            # capturing the attack character before high harmonics decay away.
+            n_attack = min(len(pcm), int(sr * 0.15))
             window   = np.hanning(n_attack)
             seg      = pcm[:n_attack] * window
             N        = max(n_attack, 65536)   # zero-pad for finer freq resolution
             spec     = np.abs(np.fft.rfft(seg, n=N))
             freqs_fft = np.fft.rfftfreq(N, 1.0/sr)
 
-            # Smooth with 1/12-octave bands — narrow enough to show pickup
-            # resonance peaks while suppressing individual harmonic spikes.
+            # Psychoacoustic smoothing: 1/3-octave but minimum window = 2 harmonics.
+            # This bridges the gaps between harmonics so we see the pickup resonance
+            # envelope rather than individual harmonic spikes.
+            f0_hz   = OPEN_STRINGS[si]       # fundamental of played string
             audio_db = []
             peak_spec = np.max(spec) + 1e-12
             for fc in FREQS:
-                lo = fc / (2 ** (1/24))
-                hi = fc * (2 ** (1/24))
+                # 1/3-octave half-width, but at least 1 harmonic spacing wide
+                oct_lo = fc / (2 ** (1/6))
+                oct_hi = fc * (2 ** (1/6))
+                # Minimum: catch ±1.5 harmonics around fc
+                min_lo = fc - 1.5 * f0_hz
+                min_hi = fc + 1.5 * f0_hz
+                lo = min(oct_lo, min_lo)
+                hi = max(oct_hi, min_hi)
+                lo = max(lo, 20.0)
+                mask = (freqs_fft >= lo) & (freqs_fft <= hi)
+                band_val = np.mean(spec[mask]) if mask.any() else 1e-12
+                audio_db.append(float(20 * np.log10(band_val / peak_spec + 1e-12)))
                 mask = (freqs_fft >= lo) & (freqs_fft <= hi)
                 band_val = np.mean(spec[mask]) if mask.any() else 1e-12
                 audio_db.append(float(20 * np.log10(band_val / peak_spec + 1e-12)))
