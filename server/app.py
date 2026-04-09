@@ -405,14 +405,18 @@ class GuitarSim:
             self.state.audio_token = (self.state.audio_token or 0) + 1
             self.state.status_msg  = f"plucked {STRING_NAMES[si]}"
 
-            # Audio FR: dense-grid sweep WITH position comb, self-normalised.
-            # 4000 points resolves comb nulls; band-averaged to 200-point chart axis.
-            # Self-normalised (peak = 0 dB) so it shows spectral shape including
-            # comb notches and electronics rolloff. Vol/tone changes shift the shape.
+            # Audio FR: dense-grid sweep with pickup position comb AND pluck position
+            # weighting. Pluck at position p creates harmonic weights |sin(n*pi*p)|,
+            # which in continuous freq is |sin(pi*f*p/f0)|. Combined with the pickup
+            # comb, this gives the full string+position+electronics response shape.
             DENSE = np.logspace(np.log10(50), np.log10(20000), 4000)
             resp_dense = sweep(pus, active, cable, self.state.wiring,
                                R_amp=r_amp, f0=f0, include_position=True,
                                freqs=DENSE)
+            # Pluck position weighting: |sin(pi*f*pluck_pos/f0)|
+            pluck_p = self.state.pluck_pos / 100.0
+            pluck_weight = np.abs(np.sin(np.pi * DENSE * pluck_p / f0))
+            resp_dense = resp_dense * pluck_weight
             peak_dense = float(np.max(resp_dense)) or 1.0
             # Band-average onto FREQS with 1/3-octave windows
             audio_db = []
