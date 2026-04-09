@@ -40,12 +40,15 @@ def _default_pu(pos, ptype):
     db  = PICKUPS[ptype]; dp = POSITION_DEFAULTS.get(pos,{"dist_mm":80,"scale_mm":628})
     # Pick a position-appropriate default preset: prefer one whose name contains
     # the position keyword (neck/bridge/middle). Fall back to first preset.
+    preset_idx = 0
     entry = db[0]
-    for candidate in db:
+    for i, candidate in enumerate(db):
         if pos in candidate["name"].lower():
             entry = candidate
+            preset_idx = i
             break
     return {"pos":pos,"type":ptype,
+            "preset_idx": preset_idx,
             "rdc":entry["rdc"],"L":entry["L"],"Cp":entry["Cp"],
             "base_rdc":entry["rdc"],"base_L":entry["L"],"base_Cp":entry["Cp"],
             "Rd": entry.get("Rd", 0.0), "Ld": entry.get("Ld", 0.0),
@@ -129,6 +132,7 @@ class GuitarSim:
                             "single":    self.state.sc_presets,
                             "p90":       self.state.p90_presets}.get(ptype, self.state.hb_presets)
             setattr(self.state,f"pu{i}_presets",     presets_list)
+            setattr(self.state,f"pu{i}_preset",      p.get("preset_idx", 0))
             setattr(self.state,f"pu{i}_vol",         p["vol_pct"])
             setattr(self.state,f"pu{i}_tone",        p["tone_pct"])
             setattr(self.state,f"pu{i}_rvol",        p["Rvol"])
@@ -360,6 +364,7 @@ class GuitarSim:
             db    = PICKUPS[ptype]
             if 0 <= preset_idx < len(db):
                 p = db[preset_idx]
+                self._pu_data[i]["preset_idx"] = preset_idx
                 self._pu_data[i]["base_rdc"] = p["rdc"]
                 self._pu_data[i]["base_L"]   = p["L"]
                 self._pu_data[i]["base_Cp"]  = p["Cp"]
