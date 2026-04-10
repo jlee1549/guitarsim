@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Guitar Circuit Scope</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#111;color:#ccc;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#toolbar{display:flex;gap:10px;align-items:center;padding:7px 14px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;flex-wrap:wrap}
+.kg{display:flex;flex-direction:column;align-items:center;gap:2px}
+.kg label{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.05em}
+.kg select,.kg input[type=range]{background:#1e1e1e;color:#aaa;border:1px solid #333;border-radius:3px;padding:2px 5px;font-size:11px}
+.kg span{color:#888;font-size:11px;min-width:36px;text-align:center;font-variant-numeric:tabular-nums}
+#ref-hint{font-size:10px;color:#333;margin-left:auto;align-self:center}
+#main{display:flex;flex:1;min-height:0}
+#left{width:320px;flex-shrink:0;background:#141414;border-right:1px solid #222;overflow:hidden}
+#right{flex:1;display:flex;flex-direction:column;min-width:0}
+canvas{flex:1;width:100%;display:block}
+#stats{display:flex;gap:14px;padding:5px 14px;background:#161616;border-top:1px solid #222;font-size:11px;color:#555;font-variant-numeric:tabular-nums}
+.sv{color:#4af;font-family:monospace;min-width:56px}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <div class="kg"><label>Wiring</label>
+    <select id="sl-wiring" onchange="update()"><option value="50s">50s</option><option value="modern">Modern</option></select></div>
+  <div class="kg"><label>Vol</label>
+    <input type="range" id="sl-vol" min="0" max="100" value="100" oninput="update();lbl('lbl-vol',this.value+'%')">
+    <span id="lbl-vol">100%</span></div>
+  <div class="kg"><label>Tone</label>
+    <input type="range" id="sl-tone" min="0" max="100" value="100" oninput="update();lbl('lbl-tone',this.value+'%')">
+    <span id="lbl-tone">100%</span></div>
+  <div class="kg"><label>Vol pot</label>
+    <select id="sl-rvol" onchange="update()">
+      <option value="250000">250 kΩ</option><option value="500000" selected>500 kΩ</option><option value="1000000">1 MΩ</option></select></div>
+  <div class="kg"><label>Tone pot</label>
+    <select id="sl-rtone" onchange="update()">
+      <option value="250000">250 kΩ</option><option value="500000" selected>500 kΩ</option><option value="1000000">1 MΩ</option></select></div>
+  <div class="kg"><label>Cap</label>
+    <select id="sl-cap" onchange="update()">
+      <option value="10e-9">10 nF</option><option value="22e-9" selected>22 nF</option>
+      <option value="47e-9">47 nF</option><option value="100e-9">100 nF</option></select></div>
+  <div class="kg"><label>Cable</label>
+    <select id="sl-cable" onchange="update()">
+      <option value="100e-12">100 pF</option><option value="200e-12" selected>200 pF</option>
+      <option value="500e-12">500 pF</option></select></div>
+  <div class="kg"><label>Pickup</label>
+    <select id="sl-pu" onchange="update()">
+      <option value="paf">PAF (vintage HB)</option><option value="jb">JB (hot HB)</option>
+      <option value="sc">Texas Special (SC)</option></select></div>
+  <div id="ref-hint">press R to set reference</div>
+</div>
+<div id="main">
+  <div id="left"><svg id="svg" viewBox="0 0 320 480" width="320" height="480" style="display:block"></svg></div>
+  <div id="right">
+    <canvas id="cv"></canvas>
+    <div id="stats">
+      <span>Peak</span><span class="sv" id="st0">—</span>
+      <span>1 kHz</span><span class="sv" id="st1">—</span>
+      <span>4 kHz</span><span class="sv" id="st2">—</span>
+      <span>8 kHz</span><span class="sv" id="st3">—</span>
+    </div>
+  </div>
+</div>
+<script>
+const lbl=(id,v)=>document.getElementById(id).textContent=v;
+const el=id=>document.getElementById(id);
+const PU_DB={
+  paf:{rdc:8200,L:5.0,Cp:100e-12,name:'PAF'},
+  jb:{rdc:16600,L:7.5,Cp:100e-12,name:'JB'},
+  sc:{rdc:6400,L:2.3,Cp:60e-12,name:'Texas Special'},
+};
+const FREQS=Array.from({length:300},(_,i)=>20*Math.pow(1000,i/299));
+// Complex helpers
+const cadd=(a,b)=>({re:a.re+b.re,im:a.im+b.im});
+const cdiv=(a,b)=>{const d=b.re*b.re+b.im*b.im;return{re:(a.re*b.re+a.im*b.im)/d,im:(a.im*b.re-a.re*b.im)/d}};
+const cabs=a=>Math.sqrt(a.re*a.re+a.im*a.im);
+function gain(f,pu,Ccable,Rvol,Rtone,Ctone,va,ta,wiring,Ramp=1e6){
+  const w=2*Math.PI*f;
+  const ZL={re:pu.rdc,im:w*pu.L};
+  const YCp={re:0,im:w*pu.Cp};
+  const Zs=cdiv({re:1,im:0},cadd(cdiv({re:1,im:0},ZL),YCp));
+  const Rv1=Rvol*(1-va), Rv2=Rvol*va;
+  const Rs=Rtone*(1-ta)+10;
+  const Ztone=cadd({re:Rs,im:0},{re:0,im:-1/(w*Ctone)});
+  const Ytone=cdiv({re:1,im:0},Ztone);
+  const Ycable={re:0,im:w*Ccable};
+  const Yamp={re:1/Ramp,im:0};
+  let Zin={re:Rv1,im:0};
+  if(wiring==='modern'){
+    const Zs_mod=cdiv({re:1,im:0},cadd(cdiv({re:1,im:0},Zs),Ytone));
+    Zin=cadd(Zs_mod,{re:Rv1,im:0});
+  } else {
+    Zin=cadd(Zs,{re:Rv1,im:0});
+  }
+  let Yshunt=cadd(cadd({re:1/Rv2,im:0},Ycable),Yamp);
+  if(wiring==='50s') Yshunt=cadd(Yshunt,Ytone);
+  const Zload=cdiv({re:1,im:0},Yshunt);
+  return cabs(cdiv(Zload,cadd(Zin,Zload)));
+}
+function curve(){
+  const pu=PU_DB[el('sl-pu').value];
+  const wiring=el('sl-wiring').value;
+  const va=+el('sl-vol').value/100, ta=+el('sl-tone').value/100;
+  const Rv=+el('sl-rvol').value, Rt=+el('sl-rtone').value;
+  const Ct=Function('return '+el('sl-cap').value)();
+  const Cc=Function('return '+el('sl-cable').value)();
+  const g=FREQS.map(f=>gain(f,pu,Cc,Rv,Rt,Ct,va,ta,wiring));
+  const pk=Math.max(...g);
+  return g.map(v=>20*Math.log10(Math.max(v/pk,1e-9)));
+}
+let cur=null, ref=null;
+function dbAt(c,f){const i=FREQS.findIndex(x=>x>=f);return i<0?'—':c[i].toFixed(1)+' dB'}
+function stats(c){
+  const pi=c.indexOf(Math.max(...c));
+  const pf=FREQS[pi];
+  el('st0').textContent=pf>=1000?(pf/1000).toFixed(1)+'kHz':Math.round(pf)+'Hz';
+  el('st1').textContent=dbAt(c,1000);
+  el('st2').textContent=dbAt(c,4000);
+  el('st3').textContent=dbAt(c,8000);
+}
+function scope(){
+  const cv=el('cv'); const W=cv.clientWidth,H=cv.clientHeight;
+  cv.width=W;cv.height=H;
+  const ctx=cv.getContext('2d');
+  const PL=52,PR=16,PT=16,PB=32;
+  const pw=W-PL-PR,ph=H-PT-PB;
+  const DBL=-42,DBH=3;
+  const fLo=Math.log10(20),fHi=Math.log10(20000);
+  const fx=f=>PL+pw*(Math.log10(f)-fLo)/(fHi-fLo);
+  const dy=db=>PT+ph*(1-(db-DBL)/(DBH-DBL));
+  ctx.fillStyle='#0c0c0c';ctx.fillRect(0,0,W,H);
+  // Grid dbs
+  [-40,-30,-20,-10,-6,-3,0].forEach(db=>{
+    const y=dy(db);
+    ctx.strokeStyle='#1c1c1c';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(PL,y);ctx.lineTo(PL+pw,y);ctx.stroke();
+    ctx.fillStyle='#3a3a3a';ctx.font='10px monospace';ctx.textAlign='right';
+    ctx.fillText(db,PL-4,y+3);
+  });
+  // Grid freqs
+  [50,100,200,500,1000,2000,5000,10000,20000].forEach(f=>{
+    const x=fx(f);
+    ctx.strokeStyle='#1c1c1c';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x,PT);ctx.lineTo(x,PT+ph);ctx.stroke();
+    if(f>=100){
+      ctx.fillStyle='#3a3a3a';ctx.font='10px monospace';ctx.textAlign='center';
+      ctx.fillText(f>=1000?(f/1000)+'k':f,x,PT+ph+14);
+    }
+  });
+  function path(c,color,lw,dash,alpha){
+    ctx.save();ctx.strokeStyle=color;ctx.lineWidth=lw;
+    ctx.globalAlpha=alpha;if(dash)ctx.setLineDash(dash);
+    ctx.beginPath();
+    c.forEach((db,i)=>{
+      const x=fx(FREQS[i]),y=dy(db);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();ctx.restore();
+  }
+  if(ref){path(ref,'#2a5a7a',1.5,[6,3],0.8)}
+  if(cur){
+    path(cur,'#4af',5,[],0.09);
+    path(cur,'#4af',1.8,[],1);
+  }
+  // Legend
+  if(ref){
+    ctx.strokeStyle='#2a5a7a';ctx.lineWidth=1.5;ctx.setLineDash([5,3]);
+    ctx.beginPath();ctx.moveTo(PL+4,PT+10);ctx.lineTo(PL+24,PT+10);ctx.stroke();
+    ctx.setLineDash([]);ctx.fillStyle='#2a5a7a';ctx.font='10px system-ui';
+    ctx.textAlign='left';ctx.fillText('ref',PL+28,PT+14);
+  }
+  ctx.strokeStyle='#4af';ctx.lineWidth=1.8;ctx.beginPath();
+  ctx.moveTo(PL+4,PT+(ref?22:10));ctx.lineTo(PL+24,PT+(ref?22:10));ctx.stroke();
+  ctx.fillStyle='#4af';ctx.font='10px system-ui';ctx.textAlign='left';
+  ctx.fillText('current',PL+28,PT+(ref?26:14));
+}
+function diagram(){
+  const pu=PU_DB[el('sl-pu').value];
+  const wiring=el('sl-wiring').value;
+  const va=+el('sl-vol').value/100;
+  const ta=+el('sl-tone').value/100;
+  const is50s=wiring==='50s';
+  const GY=460; // ground rail y
+  let s=`<defs>
+  <filter id="gl"><feGaussianBlur stdDeviation="2.5" result="b"/>
+  <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>`;
+  // Ground rail
+  s+=`<line x1="0" y1="${GY}" x2="320" y2="${GY}" stroke="#2a2a2a" stroke-width="1.5" stroke-dasharray="5 3"/>`;
+  s+=`<text x="8" y="${GY-3}" font-size="9" fill="#333" font-family="monospace">GND</text>`;
+  // Ground symbols at key points
+  [[80,GY],[210,GY],[280,GY]].forEach(([x,y])=>{
+    s+=`<line x1="${x}" y1="${y}" x2="${x}" y2="${y+8}" stroke="#2a2a2a" stroke-width="1.5"/>`;
+    s+=`<line x1="${x-6}" y1="${y+8}" x2="${x+6}" y2="${y+8}" stroke="#2a2a2a" stroke-width="1.5"/>`;
+    s+=`<line x1="${x-4}" y1="${y+12}" x2="${x+4}" y2="${y+12}" stroke="#2a2a2a" stroke-width="1"/>`;
+  });
+
+  // ── PICKUP (top-left) ──
+  const PU={x:20,y:30,w:120,h:90};
+  s+=`<rect x="${PU.x}" y="${PU.y}" width="${PU.w}" height="${PU.h}" rx="6"
+      fill="#161e16" stroke="#1e341e" stroke-width="1"/>`;
+  s+=`<text x="${PU.x+PU.w/2}" y="${PU.y+14}" text-anchor="middle" font-size="10"
+      font-weight="500" fill="#4a7a4a" font-family="system-ui">${pu.name}</text>`;
+  s+=`<text x="${PU.x+PU.w/2}" y="${PU.y+26}" text-anchor="middle" font-size="8"
+      fill="#2a4a2a" font-family="monospace">${(pu.rdc/1000).toFixed(1)}kΩ · ${pu.L}H</text>`;
+  // Coil loops
+  for(let i=0;i<5;i++) s+=`<path d="M${PU.x+10+i*18} ${PU.y+54} A9 9 0 0 1 ${PU.x+10+i*18+18} ${PU.y+54}"
+    fill="none" stroke="#2e5a2e" stroke-width="1.5"/>`;
+  // Magnet bar
+  s+=`<rect x="${PU.x+8}" y="${PU.y+62}" width="${PU.w-16}" height="6" rx="2"
+      fill="none" stroke="#2a4a2a" stroke-width="1"/>`;
+  s+=`<text x="${PU.x+PU.w/2}" y="${PU.y+68}" text-anchor="middle" font-size="7"
+      fill="#1e361e" font-family="monospace">N S N S N S</text>`;
+  // Lugs
+  const PH={x:PU.x+PU.w,y:PU.y+48}; // hot lug
+  const PG={x:PU.x+PU.w,y:PU.y+72}; // gnd lug
+  s+=`<circle cx="${PH.x}" cy="${PH.y}" r="3.5" fill="#c88010"/>`;
+  s+=`<text x="${PH.x+5}" y="${PH.y+4}" font-size="8" fill="#8a5a00" font-family="system-ui">hot</text>`;
+  s+=`<circle cx="${PG.x}" cy="${PG.y}" r="3.5" fill="#2a2a2a"/>`;
+  s+=`<text x="${PG.x+5}" y="${PG.y+4}" font-size="8" fill="#3a3a3a" font-family="system-ui">gnd</text>`;
+
+  // ── VOL POT (bottom-left) ──
+  const VP={x:20,y:190,w:120,h:110};
+  const VL1={x:VP.x+18,y:VP.y+46};
+  const VL2={x:VP.x+60,y:VP.y+82};
+  const VL3={x:VP.x+102,y:VP.y+46};
+  s+=`<rect x="${VP.x}" y="${VP.y}" width="${VP.w}" height="${VP.h}" rx="6"
+      fill="#16161e" stroke="#1e1e34" stroke-width="1"/>`;
+  s+=`<text x="${VP.x+VP.w/2}" y="${VP.y+14}" text-anchor="middle" font-size="10"
+      font-weight="500" fill="#4a4a8a" font-family="system-ui">Volume</text>`;
+  s+=`<text x="${VP.x+VP.w/2}" y="${VP.y+26}" text-anchor="middle" font-size="8"
+      fill="#2a2a5a" font-family="monospace">${(+el('sl-rvol').value/1000).toFixed(0)} kΩ audio</text>`;
+  // Resistor body
+  s+=`<rect x="${VP.x+12}" y="${VP.y+38}" width="${VP.w-24}" height="12" rx="3"
+      fill="none" stroke="#2a2a4a" stroke-width="1.2"/>`;
+  // Wiper arrow
+  const wx=VP.x+12+(VP.w-24)*(1-va);
+  s+=`<line x1="${wx}" y1="${VP.y+66}" x2="${wx}" y2="${VP.y+52}" stroke="#4af" stroke-width="1.5"/>`;
+  s+=`<polygon points="${wx},${VP.y+52} ${wx-4},${VP.y+59} ${wx+4},${VP.y+59}" fill="#4af"/>`;
+  s+=`<line x1="${wx-7}" y1="${VP.y+72}" x2="${wx+7}" y2="${VP.y+72}" stroke="#4af" stroke-width="1.2"/>`;
+  // Lug dots + labels
+  s+=`<circle cx="${VL1.x}" cy="${VL1.y}" r="3" fill="#c88010"/>`;
+  s+=`<text x="${VL1.x}" y="${VL1.y-5}" text-anchor="middle" font-size="8" fill="#7a4a00" font-family="monospace">1</text>`;
+  s+=`<circle cx="${VL2.x}" cy="${VL2.y}" r="3" fill="#4af"/>`;
+  s+=`<text x="${VL2.x}" y="${VL2.y+12}" text-anchor="middle" font-size="8" fill="#2a6a8a" font-family="monospace">2</text>`;
+  s+=`<circle cx="${VL3.x}" cy="${VL3.y}" r="3" fill="#2a2a2a"/>`;
+  s+=`<text x="${VL3.x}" y="${VL3.y-5}" text-anchor="middle" font-size="8" fill="#3a3a3a" font-family="monospace">3</text>`;
+  s+=`<text x="${VP.x+VP.w/2}" y="${VP.y+VP.h-8}" text-anchor="middle" font-size="9"
+      fill="#2a2a5a" font-family="system-ui">${Math.round(va*100)}%</text>`;
+  // Lug 3 → GND
+  s+=`<line x1="${VL3.x}" y1="${VL3.y}" x2="${VL3.x}" y2="${GY}" stroke="#252525" stroke-width="1.2"/>`;
+
+  // ── TONE POT (top-right) ──
+  const TP={x:180,y:80,w:120,h:110};
+  const TL1={x:TP.x+18,y:TP.y+46};
+  const TL2={x:TP.x+60,y:TP.y+82};
+  const TL3={x:TP.x+102,y:TP.y+46};
+  s+=`<rect x="${TP.x}" y="${TP.y}" width="${TP.w}" height="${TP.h}" rx="6"
+      fill="#1e1616" stroke="#341e1e" stroke-width="1"/>`;
+  s+=`<text x="${TP.x+TP.w/2}" y="${TP.y+14}" text-anchor="middle" font-size="10"
+      font-weight="500" fill="#8a4a4a" font-family="system-ui">Tone</text>`;
+  s+=`<text x="${TP.x+TP.w/2}" y="${TP.y+26}" text-anchor="middle" font-size="8"
+      fill="#5a2a2a" font-family="monospace">${(+el('sl-rtone').value/1000).toFixed(0)} kΩ audio</text>`;
+  s+=`<rect x="${TP.x+12}" y="${TP.y+38}" width="${TP.w-24}" height="12" rx="3"
+      fill="none" stroke="#4a2a2a" stroke-width="1.2"/>`;
+  const twx=TP.x+12+(TP.w-24)*(1-ta);
+  s+=`<line x1="${twx}" y1="${TP.y+66}" x2="${twx}" y2="${TP.y+52}" stroke="#f86" stroke-width="1.5"/>`;
+  s+=`<polygon points="${twx},${TP.y+52} ${twx-4},${TP.y+59} ${twx+4},${TP.y+59}" fill="#f86"/>`;
+  s+=`<line x1="${twx-7}" y1="${TP.y+72}" x2="${twx+7}" y2="${TP.y+72}" stroke="#f86" stroke-width="1.2"/>`;
+  s+=`<circle cx="${TL1.x}" cy="${TL1.y}" r="3" fill="${is50s?'#3a6a8a':'#c88010'}"/>`;
+  s+=`<text x="${TL1.x}" y="${TL1.y-5}" text-anchor="middle" font-size="8"
+      fill="${is50s?'#2a4a6a':'#7a4a00'}" font-family="monospace">1</text>`;
+  s+=`<circle cx="${TL2.x}" cy="${TL2.y}" r="3" fill="#f86"/>`;
+  s+=`<text x="${TL2.x}" y="${TL2.y+12}" text-anchor="middle" font-size="8" fill="#8a3a3a" font-family="monospace">2</text>`;
+  s+=`<circle cx="${TL3.x}" cy="${TL3.y}" r="3" fill="#2a2a2a"/>`;
+  s+=`<text x="${TL3.x}" y="${TL3.y-5}" text-anchor="middle" font-size="8" fill="#3a3a3a" font-family="monospace">3</text>`;
+  s+=`<text x="${TP.x+TP.w/2}" y="${TP.y+TP.h-8}" text-anchor="middle" font-size="9"
+      fill="#5a2a2a" font-family="system-ui">${Math.round(ta*100)}%</text>`;
+  s+=`<line x1="${TL3.x}" y1="${TL3.y}" x2="${TL3.x}" y2="${GY}" stroke="#252525" stroke-width="1.2"/>`;
+
+  // ── TONE CAP (bottom-right) ──
+  const CP={x:190,y:300,w:80,h:50};
+  const CPT={x:CP.x+CP.w/2,y:CP.y};
+  const CPB={x:CP.x+CP.w/2,y:CP.y+CP.h};
+  s+=`<rect x="${CP.x}" y="${CP.y}" width="${CP.w}" height="${CP.h}" rx="5"
+      fill="#1e161e" stroke="#341e34" stroke-width="1"/>`;
+  s+=`<text x="${CP.x+CP.w/2}" y="${CP.y+14}" text-anchor="middle" font-size="10"
+      font-weight="500" fill="#7a4a7a" font-family="system-ui">Cap</text>`;
+  s+=`<line x1="${CP.x+12}" y1="${CP.y+22}" x2="${CP.x+CP.w-12}" y2="${CP.y+22}" stroke="#7a4a7a" stroke-width="3"/>`;
+  s+=`<line x1="${CP.x+12}" y1="${CP.y+32}" x2="${CP.x+CP.w-12}" y2="${CP.y+32}" stroke="#7a4a7a" stroke-width="3"/>`;
+  const nf=Math.round(Function('return '+el('sl-cap').value)()*1e9);
+  s+=`<text x="${CP.x+CP.w/2}" y="${CP.y+46}" text-anchor="middle" font-size="8"
+      fill="#4a2a4a" font-family="monospace">${nf} nF</text>`;
+  s+=`<line x1="${CPB.x}" y1="${CPB.y}" x2="${CPB.x}" y2="${GY}" stroke="#252525" stroke-width="1.2"/>`;
+
+  // ── OUTPUT JACK (far right) ──
+  const JK={x:255,y:390,w:50,h:56};
+  const JTIP={x:JK.x+15,y:JK.y+28};
+  const JGND={x:JK.x+38,y:JK.y+28};
+  s+=`<rect x="${JK.x}" y="${JK.y}" width="${JK.w}" height="${JK.h}" rx="5"
+      fill="#181818" stroke="#2a2a2a" stroke-width="1"/>`;
+  s+=`<text x="${JK.x+JK.w/2}" y="${JK.y+13}" text-anchor="middle" font-size="9"
+      font-weight="500" fill="#555" font-family="system-ui">Jack</text>`;
+  s+=`<circle cx="${JTIP.x}" cy="${JTIP.y}" r="3" fill="#c88010"/>`;
+  s+=`<text x="${JTIP.x}" y="${JTIP.y+11}" text-anchor="middle" font-size="7" fill="#7a4a00" font-family="monospace">tip</font>`;
+  s+=`<circle cx="${JGND.x}" cy="${JGND.y}" r="3" fill="#2a2a2a"/>`;
+  s+=`<line x1="${JGND.x}" y1="${JGND.y+3}" x2="${JGND.x}" y2="${GY}" stroke="#252525" stroke-width="1.2"/>`;
+
+  // ── WIRES ──
+  const HA=0.3+0.7*va; // hot wire alpha
+  const TA=0.2+0.8*(1-ta); // tone cap wire alpha (brightest at low tone)
+
+  // Hot: pickup → vol lug 1 (route via top)
+  const hotY=18;
+  s+=`<polyline points="${PH.x},${PH.y} 162,${PH.y} 162,${hotY} ${VL1.x},${hotY} ${VL1.x},${VL1.y}"
+      fill="none" stroke="#c88010" stroke-width="2" opacity="${HA}"/>`;
+  s+=`<circle cx="162" cy="${PH.y}" r="2" fill="#c88010" opacity="${HA}"/>`;
+
+  // Pickup gnd
+  s+=`<line x1="${PG.x}" y1="${PG.y}" x2="170" y2="${PG.y}" stroke="#252525" stroke-width="1.2"/>`;
+  s+=`<line x1="170" y1="${PG.y}" x2="170" y2="${GY}" stroke="#252525" stroke-width="1.2"/>`;
+
+  // Vol wiper (lug 2) → output (jack tip) and to right
+  s+=`<polyline points="${VL2.x},${VL2.y} ${VL2.x},${JK.y+10} ${JTIP.x},${JK.y+10} ${JTIP.x},${JTIP.y}"
+      fill="none" stroke="#4af" stroke-width="2" opacity="${HA}" filter="url(#gl)"/>`;
+
+  // 50s vs modern: tone input connection
+  if(is50s){
+    // Tone lug 1 from vol wiper (lug 2) — dashed arc to the right
+    const midX=160, midY=VL2.y+20;
+    s+=`<polyline points="${VL2.x},${VL2.y} ${midX},${VL2.y} ${midX},${TL1.y} ${TL1.x},${TL1.y}"
+        fill="none" stroke="#4af" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.65"/>`;
+    s+=`<circle cx="${VL2.x}" cy="${VL2.y}" r="4" fill="none" stroke="#4af" stroke-width="1" opacity="0.8"/>`;
+    s+=`<text x="${midX+4}" y="${(VL2.y+TL1.y)/2}" font-size="8" fill="#2a5a7a"
+        font-family="system-ui" dominant-baseline="central">50s</text>`;
+  } else {
+    // Modern: tone lug 1 from hot bus (before vol lug 1)
+    const jx=VL1.x+8;
+    s+=`<polyline points="${jx},${hotY} ${jx},${TP.y-12} ${TL1.x},${TP.y-12} ${TL1.x},${TL1.y}"
+        fill="none" stroke="#c88010" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.65"/>`;
+    s+=`<circle cx="${jx}" cy="${hotY}" r="3.5" fill="#c88010" opacity="0.7"/>`;
+    s+=`<text x="${jx+4}" y="${(hotY+TP.y-12)/2}" font-size="8" fill="#7a5010"
+        font-family="system-ui" dominant-baseline="central">modern</text>`;
+  }
+
+  // Tone wiper → cap top
+  s+=`<line x1="${TL2.x}" y1="${TL2.y}" x2="${CPT.x}" y2="${CPT.y}"
+      stroke="#f86" stroke-width="1.5" opacity="${TA}"/>`;
+
+  // Wiring label at bottom
+  s+=`<text x="160" y="${GY+14}" text-anchor="middle" font-size="9" fill="#2a2a2a" font-family="system-ui"
+      >${is50s?'50s — tone taps vol wiper':'Modern — tone taps vol input'}</text>`;
+
+  el('svg').innerHTML=s;
+}
+function update(){
+  cur=curve(); stats(cur); diagram(); scope();
+}
+window.addEventListener('keydown',e=>{
+  if(e.key==='r'||e.key==='R'){ref=cur?[...cur]:null;scope();}
+});
+window.addEventListener('resize',()=>{if(cur)scope();});
+update();
+</script>
+</body>
+</html>

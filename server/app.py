@@ -719,7 +719,10 @@ document.head.appendChild(sc);
 
 
 def main():
+    import pathlib
     app = GuitarSim()
+    static_dir = str(pathlib.Path(__file__).parent / "static")
+    app.server.serve["tools"] = static_dir
     app.server.start(host="0.0.0.0")
 
 if __name__ == "__main__":
