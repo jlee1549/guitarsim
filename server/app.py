@@ -9,6 +9,7 @@ State: flat indexed keys for pickup params (trame watches top-level keys).
 from trame.app import get_server
 from trame.ui.vuetify3 import SinglePageLayout
 from trame.widgets import vuetify3 as v, html, client
+from trame.widgets import plotly as plotly_widget
 from trame.decorators import TrameApp, change
 
 import numpy as np, base64
@@ -17,6 +18,8 @@ from taper_utils import vol_pct_to_knob, knob_to_vol_pct
 from simulation import PickupParams, sweep, FREQS
 from audio import render_pluck, OPEN_STRINGS, STRING_NAMES, DEFAULT_PLUCK_POS
 from pickup_db import PICKUPS, LAYOUTS, POSITION_DEFAULTS
+from wiring import make_wiring_svg
+from plotly_fig import make_fr_figure
 
 MAX_PU = 3
 COLORS = ["#378ADD", "#D85A30", "#1D9E75"]
@@ -84,6 +87,11 @@ class GuitarSim:
         self.state.status_msg  = "ready"
         self.state.audio_b64   = ""
         self.state.audio_token = 0
+        self.state.wiring_svg  = ""   # SVG string (legacy)
+        self.state.wiring_src  = ""   # base64 data URI for <img>
+
+        # Plotly figure widget reference (set during layout build)
+        self._plotly_fig = None
 
         # Topology state — shared vs independent controls
         self.state.shared_vol   = False   # HH: independent vol per pickup
@@ -123,6 +131,11 @@ class GuitarSim:
 
         self._compute_and_push()
         self._build_ui()
+        # Push initial figure and wiring now that the plotly widget is instantiated
+        self._push_plotly_fig(
+            self.state.chart_cur, self.state.chart_ref, None, None
+        )
+        self._push_wiring_svg()
 
     # ── flat state helpers ────────────────────────────────────────────────
     def _push_pu_state(self):
@@ -282,6 +295,34 @@ class GuitarSim:
                 tone_knob=10.0, tone_alpha=1.0))
         return result
 
+    def _push_plotly_fig(self, cur_db, ref_db, audio_db=None, audio_ref_db=None):
+        """Build and push a Plotly figure to the trame-plotly widget."""
+        if self._plotly_fig is None:
+            return
+        fig = make_fr_figure(
+            list(FREQS), cur_db, ref_db,
+            list(audio_db) if audio_db else None,
+            list(audio_ref_db) if audio_ref_db else None,
+        )
+        self._plotly_fig.update(fig)
+
+    def _push_wiring_svg(self):
+        """Generate SVG wiring diagram and push as base64 data URI to avoid trame HTML sanitisation."""
+        n = self.state.n_pickups
+        active = self._active()
+        pu_data = self._pu_data[:n]
+        svg_str = make_wiring_svg(
+            pu_data,
+            self.state.layout,
+            self.state.wiring,
+            active,
+            self.state.shared_vol,
+            self.state.tone_map,
+        )
+        import base64
+        b64 = base64.b64encode(svg_str.encode()).decode()
+        self.state.wiring_src = f"data:image/svg+xml;base64,{b64}"
+
     def _compute_and_push(self):
         self._pull_pu_state()
         cable  = self.state.ccable_pf * 1e-12
@@ -306,6 +347,13 @@ class GuitarSim:
 
         def at(f): return round(cur_db[int(np.argmin(np.abs(FREQS-f)))],1)
         self.state.chart_stats = {"peak":round(float(FREQS[int(np.argmax(cur_db))])),"db200":at(200),"db500":at(500),"db1k":at(1000),"db4k":at(4000)}
+
+        # Update Plotly figure
+        self._push_plotly_fig(cur_db, ref_db,
+                              self.state.chart_audio or None,
+                              self.state.chart_audio_ref or None)
+        # Update wiring SVG
+        self._push_wiring_svg()
 
         # Note when polarity would affect response (only audible via audio render)
         polarities = [pus[i].polarity for i in active]
@@ -392,6 +440,11 @@ class GuitarSim:
             self.state.chart_audio_ref = list(self.state.chart_audio)
             si = int(self.state.pluck_string)
             self.state.audio_ref_label = f"ref: {STRING_NAMES[si]}"
+            self._push_plotly_fig(
+                self.state.chart_cur, self.state.chart_ref,
+                self.state.chart_audio or None,
+                self.state.chart_audio_ref,
+            )
 
     def pluck(self, *args, **kwargs):
         self.state.busy = True; self.state.status_msg = "rendering..."
@@ -446,6 +499,12 @@ class GuitarSim:
                 val  = np.mean(resp_dense[mask]) if mask.any() else 1e-9
                 audio_db.append(round(float(20 * np.log10(max(val/peak_dense, 1e-9))), 2))
             self.state.chart_audio = audio_db
+            # Refresh plotly figure with audio FR included
+            self._push_plotly_fig(
+                self.state.chart_cur, self.state.chart_ref,
+                audio_db,
+                self.state.chart_audio_ref or None,
+            )
 
         except Exception as e:
             self.state.status_msg = f"error: {e}"
@@ -461,11 +520,12 @@ class GuitarSim:
         with SinglePageLayout(self.server) as layout:
             layout.title.set_text("Guitar Electronics Simulator")
 
-            # ── JS: Chart.js graph + audio playback ──────────────────────
+            # ── JS: audio playback only (chart now handled by trame-plotly) ──
             client.Style("body{background:#f5f5f3;}")
             client.Script("""
 (function(){
-// ── Audio ──────────────────────────────────────────────────────────────
+
+// ── Audio playback ─────────────────────────────────────────────────────────
 var _ctx=null, _lastToken=-1;
 function getCtx(){
   if(!_ctx) _ctx=new(window.AudioContext||window.webkitAudioContext)();
@@ -474,94 +534,92 @@ function getCtx(){
 }
 function playWav(b64){
   try{
-    var binary = atob(b64);
-    var bytes = new Uint8Array(binary.length);
+    var binary=atob(b64), bytes=new Uint8Array(binary.length);
     for(var i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
-    // Verify WAV header
-    if(bytes[0]!==82||bytes[1]!==73||bytes[2]!==70||bytes[3]!==70){
-      console.warn('Invalid WAV header'); return;
-    }
-    var ctx = getCtx();
-    // Clone buffer — decodeAudioData detaches it
-    ctx.decodeAudioData(bytes.buffer.slice(0), function(buf){
-      var src=ctx.createBufferSource();
-      var g=ctx.createGain(); g.gain.value=0.8;
-      src.buffer=buf; src.connect(g); g.connect(ctx.destination);
-      src.start();
-    }, function(e){ console.warn('decodeAudioData error',e); });
-  }catch(e){ console.warn('playWav error',e); }
+    if(bytes[0]!==82||bytes[1]!==73||bytes[2]!==70||bytes[3]!==70) return;
+    var ctx=getCtx();
+    ctx.decodeAudioData(bytes.buffer.slice(0),function(buf){
+      var src=ctx.createBufferSource(), g=ctx.createGain();
+      g.gain.value=0.8; src.buffer=buf;
+      src.connect(g); g.connect(ctx.destination); src.start();
+    },function(e){console.warn('decode error',e);});
+  }catch(e){console.warn('playWav',e);}
 }
 
-// ── Chart ───────────────────────────────────────────────────────────────
-var _chart=null;
-function initChart(){
-  var canvas=document.getElementById('freqChart');
-  if(!canvas||_chart) return;
-  _chart=new Chart(canvas,{
-    type:'line',
-    data:{datasets:[
-      {label:'electronics',data:[],borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3},
-      {label:'ref (open)',data:[],borderColor:'#888',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,3]},
-      {label:'audio FR',data:[],borderColor:'#4CAF50',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[3,3]},
-      {label:'audio ref',data:[],borderColor:'#E8A838',borderWidth:1.5,pointRadius:0,tension:0.3,borderDash:[6,2]}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{position:'bottom',labels:{boxWidth:20,font:{size:11}}},
-        tooltip:{callbacks:{title:function(i){return Math.round(i[0].parsed.x)+' Hz';},
-          label:function(c){return c.dataset.label+': '+c.parsed.y.toFixed(1)+' dB';}}}},
-      scales:{
-        x:{type:'logarithmic',min:80,max:18000,title:{display:true,text:'frequency (Hz)',font:{size:11}},
-          ticks:{callback:function(v){var s=[100,200,500,1000,2000,5000,10000];
-            return s.indexOf(Math.round(v))>=0?(v>=1000?v/1000+'k':v):null;}}},
-        y:{title:{display:true,text:'level (dB)',font:{size:11}},grid:{color:'rgba(128,128,128,0.15)'}}
-      }
-    }
-  });
-}
-function updateChart(freqs,cur,ref,audio,audioRef){
-  if(!_chart) return;
-  var allVals=cur.concat(ref).filter(isFinite);
-  if(audio&&audio.length) allVals=allVals.concat(audio.filter(isFinite));
-  if(audioRef&&audioRef.length) allVals=allVals.concat(audioRef.filter(isFinite));
-  var yMin=Math.floor((Math.min.apply(null,allVals)-3)/5)*5;
-  var yMax=Math.ceil((Math.max.apply(null,allVals)+2)/5)*5;
-  _chart.data.datasets[0].data=freqs.map(function(f,i){return{x:f,y:cur[i]};});
-  _chart.data.datasets[1].data=freqs.map(function(f,i){return{x:f,y:ref[i]};});
-  if(audio&&audio.length){
-    _chart.data.datasets[2].data=freqs.map(function(f,i){return{x:f,y:audio[i]};});
-  } else { _chart.data.datasets[2].data=[]; }
-  if(audioRef&&audioRef.length){
-    _chart.data.datasets[3].data=freqs.map(function(f,i){return{x:f,y:audioRef[i]};});
-    var refLabel=window.trame&&window.trame.state&&window.trame.state.state&&window.trame.state.state.audio_ref_label;
-    _chart.data.datasets[3].label=refLabel||'audio ref';
-  } else { _chart.data.datasets[3].data=[]; }
-  _chart.options.scales.y.min=yMin; _chart.options.scales.y.max=yMax;
-  _chart.update('none');
-}
+// ── Wiring diagram pan/zoom (CSS transform on <img>) ──────────────────────
+(function(){
+  var scale=1, tx=0, ty=0, dragging=false, lx=0, ly=0;
+  var img=null;
 
-// ── Poll trame state ─────────────────────────────────────────────────────
+  function applyTransform(){
+    if(img) img.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')';
+  }
+
+  function initPanZoom(){
+    img = document.getElementById('wiring-container');
+    if(!img) return;
+    img.style.transformOrigin = 'top left';
+    img.style.transition = 'none';
+    img.style.userSelect = 'none';
+    img.style.cursor = 'grab';
+
+    // Mouse wheel zoom
+    img.parentElement.addEventListener('wheel', function(e){
+      e.preventDefault();
+      var rect = img.getBoundingClientRect();
+      var mx = e.clientX - rect.left - tx;
+      var my = e.clientY - rect.top  - ty;
+      var delta = e.deltaY < 0 ? 1.15 : 1/1.15;
+      var newScale = Math.min(8, Math.max(0.2, scale*delta));
+      tx -= mx*(newScale/scale - 1);
+      ty -= my*(newScale/scale - 1);
+      scale = newScale;
+      applyTransform();
+    }, {passive:false});
+
+    // Drag to pan
+    img.addEventListener('mousedown', function(e){
+      dragging=true; lx=e.clientX; ly=e.clientY;
+      img.style.cursor='grabbing'; e.preventDefault();
+    });
+    window.addEventListener('mousemove', function(e){
+      if(!dragging) return;
+      tx += e.clientX-lx; ty += e.clientY-ly;
+      lx=e.clientX; ly=e.clientY;
+      applyTransform();
+    });
+    window.addEventListener('mouseup', function(){
+      dragging=false; if(img) img.style.cursor='grab';
+    });
+
+    // Button controls
+    document.getElementById('wiring-zoom-in') .onclick = function(){ scale=Math.min(8,scale*1.25); applyTransform(); };
+    document.getElementById('wiring-zoom-out').onclick = function(){ scale=Math.max(0.2,scale/1.25); applyTransform(); };
+    document.getElementById('wiring-zoom-reset').onclick = function(){ scale=1; tx=0; ty=0; applyTransform(); };
+  }
+
+  // Wait for element to exist
+  function tryInit(){
+    if(document.getElementById('wiring-container')) initPanZoom();
+    else setTimeout(tryInit, 300);
+  }
+  tryInit();
+})();
+
+// ── Audio polling ──────────────────────────────────────────────────────────
 function poll(){
   try{
     var s=window.trame&&window.trame.state&&window.trame.state.state;
     if(s){
-      // Chart
-      if(s.chart_cur&&s.chart_freqs) updateChart(s.chart_freqs,s.chart_cur,s.chart_ref||[],s.chart_audio||[],s.chart_audio_ref||[]);
-      // Audio — only play when token changes
       var tok=s.audio_token||0;
-      if(tok!==_lastToken&&tok>0&&s.audio_b64){
-        _lastToken=tok; playWav(s.audio_b64);
-      }
-      // Init chart on first connection
-      if(!_chart) initChart();
+      if(tok!==_lastToken&&tok>0&&s.audio_b64){ _lastToken=tok; playWav(s.audio_b64); }
     }
   }catch(e){}
   setTimeout(poll,500);
 }
-// Load Chart.js then start polling
-var sc=document.createElement('script');
-sc.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js';
-sc.onload=function(){initChart();poll();};
-document.head.appendChild(sc);
+
+poll();
+
 })();
 """)
 
@@ -571,87 +629,111 @@ document.head.appendChild(sc);
                 v.VSelect(v_model=("wiring",),items=(WIRING_ITEMS,),label="Wiring",density="compact",hide_details=True,style="max-width:160px;margin-left:8px;")
 
             with layout.content:
-                with v.VContainer(fluid=True, classes="pa-3"):
+                with v.VContainer(fluid=True, classes="pa-0", style="height:calc(100vh - 64px);display:flex;flex-direction:row;overflow:hidden;"):
 
-                    # Toggle
-                    html.Div("Pickup selector",classes="text-caption text-uppercase text-medium-emphasis mb-1")
-                    with v.VBtnToggle(v_model=("toggle_idx",),mandatory=True,density="compact",classes="mb-3"):
-                        with v.VBtn(v_for="(opt,ti) in tog_options",key="ti",value=("ti",),size="small"):
-                            html.Span("{{ opt.label }}")
+                    # ── LEFT: wiring diagram (pan/zoom) ─────────────────
+                    with html.Div(style="width:320px;flex-shrink:0;overflow:hidden;background:#f8f8f6;border-right:1px solid #e0e0da;position:relative;height:100%;"):
+                        # Zoom controls overlay
+                        with html.Div(style="position:absolute;top:6px;right:6px;z-index:10;display:flex;flex-direction:column;gap:3px;"):
+                            with v.VBtn(icon=True, size="x-small", variant="tonal",
+                                   click="document.getElementById('wiring-zoom-in').click()",
+                                   title="Zoom in"):
+                                v.VIcon("mdi-plus", size="14")
+                            with v.VBtn(icon=True, size="x-small", variant="tonal",
+                                   click="document.getElementById('wiring-zoom-out').click()",
+                                   title="Zoom out"):
+                                v.VIcon("mdi-minus", size="14")
+                            with v.VBtn(icon=True, size="x-small", variant="tonal",
+                                   click="document.getElementById('wiring-zoom-reset').click()",
+                                   title="Reset"):
+                                v.VIcon("mdi-fit-to-screen-outline", size="14")
+                        # Hidden control targets (easier than calling svgPanZoom API from Vue click)
+                        html.Div(id="wiring-zoom-in",  style="display:none")
+                        html.Div(id="wiring-zoom-out", style="display:none")
+                        html.Div(id="wiring-zoom-reset",style="display:none")
+                        # The diagram — img tag avoids trame SVG sanitisation
+                        html.Img(
+                            id="wiring-container",
+                            src=("wiring_src",),
+                            style="width:100%;height:100%;object-fit:contain;cursor:grab;display:block;",
+                        )
 
-                    # Pickup cards — explicit, no v-for (trame nested state problem)
-                    html.Div("Pickups",classes="text-caption text-uppercase text-medium-emphasis mb-1")
-                    with v.VRow(classes="mb-2"):
-                        for i in range(MAX_PU):
-                            with v.VCol(cols=12,sm=6,md=4,v_show=f"n_pickups > {i}"):
-                                self._pickup_card(i)
+                    # ── RIGHT: controls + scope ──────────────────────────
+                    with html.Div(style="flex:1;overflow-y:auto;display:flex;flex-direction:column;"):
 
-                    # Shared controls
-                    html.Div("Instrument",classes="text-caption text-uppercase text-medium-emphasis mb-1")
-                    with v.VRow(classes="mb-2"):
-                        with v.VCol(cols=12,sm=6,md=4):
-                            with v.VCard(variant="outlined"):
-                                with v.VCardText():
-                                    html.Div("Scale length: {{ scale_mm }} mm",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("scale_mm",),min=580,max=710,step=1,hide_details=True,classes="mb-2")
-                                    html.Div("Cable cap: {{ ccable_pf }} pF",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("ccable_pf",),min=0,max=2000,step=50,hide_details=True,classes="mb-2")
-                                    html.Div("Amp input: {{ r_amp_kohm }} kΩ",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("r_amp_kohm",),min=100,max=2000,step=100,hide_details=True)
-                        with v.VCol(cols=12,sm=6,md=4):
-                            with v.VCard(variant="outlined"):
-                                with v.VCardText():
-                                    v.VSelect(v_model=("vol_taper",),items=(TAPER_ITEMS,),label="Volume pot taper",density="compact",hide_details=True,classes="mb-3")
-                                    v.VSelect(v_model=("tone_taper",),items=(TAPER_ITEMS,),label="Tone pot taper",density="compact",hide_details=True)
-                        # Shared master controls — only visible for shared-vol layouts
-                        with v.VCol(cols=12,sm=6,md=4,v_show="shared_vol"):
-                            with v.VCard(variant="outlined"):
-                                with v.VCardText():
-                                    html.Div("Master volume: {{ master_vol.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                    v.VSlider(v_model=("master_vol",),min=0,max=100,step=1,hide_details=True,color="primary",classes="mb-2")
-                                    # Global tone sliders only for shared-vol layouts (SSS, HSS, Tele).
-                                    # For HH (shared_vol=False) tone is per-pickup, shown in each card.
-                                    with html.Div(v_show="shared_vol"):
-                                        html.Div("Tone 1 (neck): {{ tone1_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                        v.VSlider(v_model=("tone1_knob",),min=0,max=100,step=1,hide_details=True,color="secondary",classes="mb-2")
-                                        # Tone 2 only visible for SSS/HSS (has 2 tone pots)
-                                        with html.Div(v_show="tone_map.filter(t=>t==='tone2').length > 0"):
-                                            html.Div("Tone 2 (mid): {{ tone2_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
-                                            v.VSlider(v_model=("tone2_knob",),min=0,max=100,step=1,hide_details=True,color="secondary")
+                        # Controls strip
+                        with v.VContainer(fluid=True, classes="pa-2"):
 
-                    # Pluck controls
-                    html.Div("Pluck",classes="text-caption text-uppercase text-medium-emphasis mb-1")
-                    with v.VRow(align="center",classes="mb-1"):
-                        with v.VCol(cols=12,sm="auto"):
-                            v.VSelect(v_model=("pluck_string",),items=("string_items",),label="String",density="compact",hide_details=True,style="min-width:160px;")
-                        with v.VCol(cols=12,sm=4):
-                            html.Div("Position: {{ pluck_pos }}% from bridge",classes="text-caption text-medium-emphasis")
-                            v.VSlider(v_model=("pluck_pos",),min=3,max=45,step=1,hide_details=True)
-                        with v.VCol(cols="auto"):
-                            v.VBtn("Pluck",prepend_icon="mdi-music-note",color="primary",variant="outlined",loading=("busy",),click=self.pluck)
-                            v.VBtn("Set ref",size="small",variant="text",color="warning",
-                                   click=self.set_audio_ref,
-                                   v_show="chart_audio.length>0",
-                                   title="Freeze current audio FR as reference for comparison",
-                                   classes="ml-1")
-                        with v.VCol():
-                            html.Div("{{ status_msg }}",classes="text-caption text-medium-emphasis")
+                            # Selector toggle
+                            with v.VRow(dense=True, align="center", classes="mb-1"):
+                                with v.VCol(cols="auto"):
+                                    html.Div("Position",classes="text-caption text-uppercase text-medium-emphasis")
+                                with v.VCol():
+                                    with v.VBtnToggle(v_model=("toggle_idx",),mandatory=True,density="compact"):
+                                        with v.VBtn(v_for="(opt,ti) in tog_options",key="ti",value=("ti",),size="small"):
+                                            html.Span("{{ opt.label }}")
 
-                    # Stats
-                    html.Div("Peak: {{ chart_stats.peak }} Hz  |  200 Hz: {{ chart_stats.db200 }} dB  500 Hz: {{ chart_stats.db500 }} dB  1 kHz: {{ chart_stats.db1k }} dB  4 kHz: {{ chart_stats.db4k }} dB",
-                             classes="text-caption text-medium-emphasis font-weight-medium mb-1")
-                    html.Div("{{ chart_note }}",
-                             classes="text-caption text-medium-emphasis font-italic mb-2",
-                             style="color: #F9A825;",
-                             v_show="chart_note")
+                            # Pickup cards
+                            with v.VRow(dense=True, classes="mb-1"):
+                                for i in range(MAX_PU):
+                                    with v.VCol(cols=12,sm=6,md=4,v_show=f"n_pickups > {i}"):
+                                        self._pickup_card(i)
 
-                    # Chart
-                    with v.VCard(variant="outlined"):
-                        with v.VCardText(classes="pa-1"):
-                            html.Div(
-                                '<div style="position:relative;height:300px;width:100%;"><canvas id="freqChart" style="display:block;"></canvas></div>',
-                                style="width:100%;",
+                            # Instrument + taper + master
+                            with v.VRow(dense=True, classes="mb-1"):
+                                with v.VCol(cols=12,sm=4):
+                                    with v.VCard(variant="outlined"):
+                                        with v.VCardText(classes="pa-2"):
+                                            html.Div("Scale: {{ scale_mm }} mm",classes="text-caption text-medium-emphasis")
+                                            v.VSlider(v_model=("scale_mm",),min=580,max=710,step=1,hide_details=True,classes="mb-1")
+                                            html.Div("Cable: {{ ccable_pf }} pF",classes="text-caption text-medium-emphasis")
+                                            v.VSlider(v_model=("ccable_pf",),min=0,max=2000,step=50,hide_details=True,classes="mb-1")
+                                            html.Div("Amp: {{ r_amp_kohm }} kΩ",classes="text-caption text-medium-emphasis")
+                                            v.VSlider(v_model=("r_amp_kohm",),min=100,max=2000,step=100,hide_details=True)
+                                with v.VCol(cols=12,sm=4):
+                                    with v.VCard(variant="outlined"):
+                                        with v.VCardText(classes="pa-2"):
+                                            v.VSelect(v_model=("vol_taper",),items=(TAPER_ITEMS,),label="Vol taper",density="compact",hide_details=True,classes="mb-2")
+                                            v.VSelect(v_model=("tone_taper",),items=(TAPER_ITEMS,),label="Tone taper",density="compact",hide_details=True)
+                                with v.VCol(cols=12,sm=4,v_show="shared_vol"):
+                                    with v.VCard(variant="outlined"):
+                                        with v.VCardText(classes="pa-2"):
+                                            html.Div("Master vol: {{ master_vol.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
+                                            v.VSlider(v_model=("master_vol",),min=0,max=100,step=1,hide_details=True,color="primary",classes="mb-1")
+                                            with html.Div(v_show="shared_vol"):
+                                                html.Div("Tone 1: {{ tone1_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
+                                                v.VSlider(v_model=("tone1_knob",),min=0,max=100,step=1,hide_details=True,color="secondary",classes="mb-1")
+                                                with html.Div(v_show="tone_map.filter(t=>t==='tone2').length > 0"):
+                                                    html.Div("Tone 2: {{ tone2_knob.toFixed(0) }}%",classes="text-caption text-medium-emphasis")
+                                                    v.VSlider(v_model=("tone2_knob",),min=0,max=100,step=1,hide_details=True,color="secondary")
+
+                            # Pluck row
+                            with v.VRow(dense=True, align="center", classes="mb-1"):
+                                with v.VCol(cols=12,sm="auto"):
+                                    v.VSelect(v_model=("pluck_string",),items=("string_items",),label="String",density="compact",hide_details=True,style="min-width:150px;")
+                                with v.VCol(cols=12,sm=3):
+                                    html.Div("Pluck pos: {{ pluck_pos }}%",classes="text-caption text-medium-emphasis")
+                                    v.VSlider(v_model=("pluck_pos",),min=3,max=45,step=1,hide_details=True)
+                                with v.VCol(cols="auto"):
+                                    v.VBtn("Pluck",prepend_icon="mdi-music-note",color="primary",variant="outlined",size="small",loading=("busy",),click=self.pluck)
+                                    v.VBtn("Set ref",size="small",variant="text",color="warning",click=self.set_audio_ref,
+                                           v_show="chart_audio.length>0",classes="ml-1")
+                                with v.VCol():
+                                    html.Div("{{ status_msg }}",classes="text-caption text-medium-emphasis")
+                                    html.Div("Peak: {{ chart_stats.peak }} Hz  |  1 kHz: {{ chart_stats.db1k }} dB  4 kHz: {{ chart_stats.db4k }} dB",
+                                             classes="text-caption text-medium-emphasis font-weight-medium")
+
+                        # ── Plotly FR scope (fills remaining height) ─────
+                        with html.Div(style="flex:1;min-height:280px;padding:0 8px 8px;"):
+                            self._plotly_fig = plotly_widget.Figure(
+                                display_mode_bar=True,
+                                mode_bar_buttons_to_remove=[
+                                    "select2d","lasso2d","autoScale2d",
+                                    "hoverClosestCartesian","hoverCompareCartesian",
+                                ],
+                                style="height:100%;",
                             )
+
 
     def _pickup_card(self, i: int):
         p = f"pu{i}_"
