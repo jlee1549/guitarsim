@@ -198,7 +198,7 @@ def draw_jack(x, y, w=60, h=44):
 
 # ── Main layout ───────────────────────────────────────────────────────────────
 def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
-                    tone_map, width=460):
+                    tone_map, width=None):
     """
     Generate a clean, light-background wiring diagram.
 
@@ -211,16 +211,32 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
     n       = len(pu_data)
     PU_W, PU_H   = 120, 80
     POT_W, POT_H = 110, 56
-    ROW_GAP      = 24       # vertical gap between pickup rows
+    ROW_GAP      = 24
     COL_A        = 10
     COL_B        = 155
     COL_C        = 290
     JACK_X       = 390
     ROW_H        = max(PU_H, POT_H) + ROW_GAP
-
     CAP_H        = 36
-    CAP_GAP      = 8        # gap between tone pot bottom and cap top
+    CAP_GAP      = 8
     JACK_W, JACK_H = 60, 44
+
+    # Compute n_tones for shared-vol layouts (affects needed width)
+    n_tones = 0
+    if shared_vol:
+        seen_t = set()
+        for i in range(len(pu_data)):
+            tm = tone_map[i] if i < len(tone_map) else ""
+            if tm and tm not in seen_t:
+                seen_t.add(tm)
+                n_tones += 1
+
+    # Dynamic width: shared-vol needs room for vol + n_tones tones + jack
+    if width is None:
+        if shared_vol:
+            width = COL_C + n_tones * (POT_W + 16) + JACK_W + 40
+        else:
+            width = JACK_X + JACK_W + 20
 
     # Total height
     top_margin  = 20
@@ -264,23 +280,11 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         s += _gnd(COL_A + PU_W + 10, GND_Y)
 
         if shared_vol:
-            # Only draw vol+tone for first row; route other hot wires to same point
-            if i == 0:
-                _draw_vol_tone_shared(
-                    s_list := [], p, pu_data, act, row_y,
-                    COL_B, COL_C, POT_W, POT_H, CAP_H, CAP_GAP,
-                    GND_Y, JACK_X, JACK_W, JACK_H, wiring, width, active_indices
-                )
-                s += "".join(s_list)
-            else:
-                # Route hot wire to col B input
-                s += _line(hot_lug[0], hot_lug[1], COL_B + 8, hot_lug[1],
-                           stroke=HOT if act else INACTIVE, sw=WIRE_W,
-                           dash="" if act else "4 2")
-                s += _line(COL_B + 8, hot_lug[1], COL_B + 8,
-                           top_margin + POT_H/2,
-                           stroke=HOT if act else INACTIVE, sw=WIRE_W,
-                           dash="" if act else "4 2")
+            # All hot wires route to a vertical bus at COL_B left edge
+            bus_x = COL_B - 12
+            s += _line(hot_lug[0], hot_lug[1], bus_x, hot_lug[1],
+                       stroke=HOT if act else INACTIVE, sw=WIRE_W,
+                       dash="" if act else "4 2")
         else:
             # Independent vol+tone per pickup
             vol_pct  = p.get("vol_pct", 100)
@@ -356,7 +360,86 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
                        stroke=SIG if act else INACTIVE, sw=WIRE_W,
                        dash="" if act else "4 2")
 
-    # ── Output jack (independent vol path) ───────────────────────────────
+    # ── Shared-vol: master vol + shared tones + jack ─────────────────────
+    if shared_vol:
+        bus_x     = COL_B - 12
+        hot_ys    = [top_margin + i * ROW_H + PU_H//2 - 6 for i in range(n)]
+        vol_cy    = top_margin + n * ROW_H / 2   # centre vol pot on content height
+        vol_pot_y = vol_cy - POT_H / 2
+
+        # Vertical hot bus
+        s += _line(bus_x, min(hot_ys), bus_x, max(hot_ys), stroke=HOT, sw=WIRE_W)
+        s += _dot(bus_x, min(hot_ys), fill=HOT)
+
+        # Hot bus → master vol lug1
+        s += _line(bus_x, vol_cy, COL_B, vol_cy, stroke=HOT, sw=WIRE_W)
+
+        # Master vol pot
+        vol_pct = pu_data[0].get("vol_pct", 100)
+        svg_v, vl1, vl2, vl3 = draw_pot(COL_B, vol_pot_y, POT_W, POT_H,
+                                          "Master vol", vol_pct, "vol", True)
+        s += svg_v
+        s += _line(vl3[0], vl3[1], vl3[0], GND_Y, stroke=GND_COL, sw=1.2)
+        s += _gnd(vl3[0], GND_Y)
+
+        # Find unique tone assignments
+        seen = {}
+        tone_slots = []
+        for i, p in enumerate(pu_data):
+            tm = tone_map[i] if i < len(tone_map) else ""
+            if tm and tm not in seen:
+                seen[tm] = i
+                tone_slots.append((tm, p))
+
+        for ti, (tname, p) in enumerate(tone_slots):
+            tone_pct = p.get("tone_pct", 100)
+            cap_nf   = int(p.get("Ctone_nf", 22))
+            tcx      = COL_C + ti * (POT_W + 16)
+            tone_pot_y = vol_pot_y
+
+            svg_t, tl1, tl2, tl3 = draw_pot(tcx, tone_pot_y, POT_W, POT_H,
+                                              tname.replace("tone","Tone "),
+                                              tone_pct, "tone", True)
+            s += svg_t
+
+            # 50s: from vol wiper; modern: from vol lug1
+            src = vl2 if wiring == "50s" else vl1
+            src_col = SIG if wiring == "50s" else HOT
+            mid_x = tcx + 8
+            s += _line(src[0], src[1], mid_x, src[1],
+                       stroke=src_col, sw=1.2, dash="4 2")
+            s += _line(mid_x, src[1], mid_x, tl1[1],
+                       stroke=src_col, sw=1.2, dash="4 2")
+            s += _line(mid_x, tl1[1], tl1[0], tl1[1],
+                       stroke=src_col, sw=1.2, dash="4 2")
+            if ti == 0:
+                s += _dot(src[0], src[1], fill=src_col)
+
+            s += _line(tl3[0], tl3[1], tl3[0], GND_Y, stroke=GND_COL, sw=1.2)
+            s += _gnd(tl3[0], GND_Y)
+
+            cap_y = tone_pot_y + POT_H + CAP_GAP
+            svg_cap, cap_top, cap_bot = draw_cap(tl2[0], cap_y, h=CAP_H,
+                                                  label=f"{cap_nf}nF", active=True)
+            s += svg_cap
+            s += _line(tl2[0], tl2[1], cap_top[0], cap_top[1],
+                       stroke=TONE_C, sw=1.2)
+            s += _line(cap_bot[0], cap_bot[1], cap_bot[0], GND_Y,
+                       stroke=GND_COL, sw=1.2)
+            s += _gnd(cap_bot[0], GND_Y)
+
+        # Vol wiper → jack
+        last_tcx   = COL_C + max(0, len(tone_slots)-1) * (POT_W + 16)
+        jack_x_pos = last_tcx + POT_W + 24
+        jack_y     = vol_pot_y + (POT_H - JACK_H) // 2
+        s += _line(vl2[0], vl2[1], jack_x_pos, vl2[1], stroke=SIG, sw=WIRE_W)
+        svg_jack, tip, slv = draw_jack(jack_x_pos, jack_y, JACK_W, JACK_H)
+        s += svg_jack
+        s += _line(jack_x_pos, vl2[1], tip[0], tip[1], stroke=SIG, sw=WIRE_W)
+        s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
+        s += _gnd(slv[0], GND_Y)
+
+    # ── Independent-vol: output jack ─────────────────────────────────────
     if not shared_vol:
         jack_y = top_margin + n * ROW_H / 2 - JACK_H / 2
         bus_x  = JACK_X - 12
@@ -384,11 +467,3 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
 
     s += "</svg>"
     return s
-
-
-def _draw_vol_tone_shared(s_list, p, pu_data, act, row_y,
-                           COL_B, COL_C, POT_W, POT_H, CAP_H, CAP_GAP,
-                           GND_Y, JACK_X, JACK_W, JACK_H, wiring, width, active_indices):
-    """Helper for shared-vol layouts (SSS, HSS). Draws single master vol + shared tones."""
-    # Placeholder — shared-vol layout uses same structure, handled by main loop above
-    pass
