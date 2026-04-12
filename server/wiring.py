@@ -211,15 +211,16 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
     n       = len(pu_data)
     PU_W, PU_H   = 120, 80
     POT_W, POT_H = 110, 56
-    ROW_GAP      = 24
-    COL_A        = 10
-    COL_B        = 155
-    COL_C        = 290
-    JACK_X       = 390
-    ROW_H        = max(PU_H, POT_H) + ROW_GAP
+    ROW_GAP      = 28
     CAP_H        = 36
     CAP_GAP      = 8
     JACK_W, JACK_H = 60, 44
+    # ROW_H must accommodate pickup, pot, cap below pot, and gap
+    ROW_H        = max(PU_H, POT_H + CAP_GAP + CAP_H) + ROW_GAP
+    COL_A        = 10
+    COL_B        = 155
+    COL_C        = 290
+    JACK_X       = 410
 
     # Compute n_tones for shared-vol layouts (affects needed width)
     n_tones = 0
@@ -236,7 +237,7 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         if shared_vol:
             width = COL_C + n_tones * (POT_W + 16) + JACK_W + 40
         else:
-            width = JACK_X + JACK_W + 20
+            width = JACK_X + JACK_W + 16
 
     # Total height
     top_margin  = 20
@@ -291,7 +292,7 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
             tone_pct = p.get("tone_pct", 100)
             cap_nf   = int(p.get("Ctone_nf", 22))
             has_tone = p.get("has_tone", True)
-            pot_y    = row_y + (PU_H - POT_H) // 2
+            pot_y    = row_y + max(0, (PU_H - POT_H) // 2)
 
             # Vol pot
             svg_v, vl1, vl2, vl3 = draw_pot(
@@ -441,23 +442,24 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
 
     # ── Independent-vol: output jack ─────────────────────────────────────
     if not shared_vol:
-        jack_y = top_margin + n * ROW_H / 2 - JACK_H / 2
         bus_x  = JACK_X - 12
-        # Vertical bus joining all wiper outputs
-        ys = [top_margin + i * ROW_H + (PU_H - POT_H)//2 + POT_H//2 + 14
-              for i in range(n)]
-        if len(ys) > 1:
-            s += _line(bus_x, min(ys), bus_x, max(ys), stroke=SIG, sw=WIRE_W)
-        mid_y = (min(ys) + max(ys)) / 2
-        s += _line(bus_x, mid_y, JACK_X, jack_y + JACK_H/2,
-                   stroke=SIG, sw=WIRE_W)
-
+        # Collect actual wiper y positions for each row
+        wiper_ys = []
+        for i in range(n):
+            row_y  = top_margin + i * ROW_H
+            pot_y  = row_y + max(0, (PU_H - POT_H) // 2)
+            # wiper lug is at pot bottom + 14 (from draw_pot geometry)
+            wiper_ys.append(pot_y + POT_H + 14)
+        if len(wiper_ys) > 1:
+            s += _line(bus_x, min(wiper_ys), bus_x, max(wiper_ys),
+                       stroke=SIG, sw=WIRE_W)
+        mid_y = (min(wiper_ys) + max(wiper_ys)) / 2
+        jack_y = mid_y - JACK_H / 2
+        s += _line(bus_x, mid_y, JACK_X, mid_y, stroke=SIG, sw=WIRE_W)
         svg_jack, tip, slv = draw_jack(JACK_X, jack_y, JACK_W, JACK_H)
         s += svg_jack
-        s += _line(JACK_X, jack_y + JACK_H/2, tip[0], tip[1],
-                   stroke=SIG, sw=WIRE_W)
-        s += _line(slv[0], slv[1], slv[0], GND_Y,
-                   stroke=GND_COL, sw=1.2)
+        s += _line(JACK_X, mid_y, tip[0], tip[1], stroke=SIG, sw=WIRE_W)
+        s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
         s += _gnd(slv[0], GND_Y)
 
     # ── Wiring note ───────────────────────────────────────────────────────

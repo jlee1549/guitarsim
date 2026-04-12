@@ -15,6 +15,14 @@ python app.py --server
 # open http://localhost:8080
 ```
 
+## UI
+
+Two-panel layout with a draggable divider:
+
+**Left — wiring diagram.** SVG schematic generated server-side from the current configuration. Shows all pickups, pots, tone caps, and output jack wired as they would be on the real instrument. Updates immediately when any parameter changes. Drag the divider to make the panel wider. Scroll-wheel to zoom, drag to pan, and use the +/−/⊡ buttons in the top-right corner. Shared-vol layouts (SSS, HSS) show a master volume pot; independent-vol layouts (HH, SS) show a vol and tone pot per pickup.
+
+**Right — frequency response scope + controls.** Plotly log-frequency chart showing four traces: electronics transfer function (blue), wide-open reference (grey), audio FR from last pluck (green), and frozen audio reference (amber). Hover for exact dB values at any frequency. Pickup controls, instrument settings, and pluck controls are stacked above the chart.
+
 ## Features
 
 ### Layouts
