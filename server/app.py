@@ -30,7 +30,8 @@ TBLEED_ITEMS= [{"title":"None","value":"none"},{"title":"Cap only (100 pF)","val
                {"title":"Cap + 150kΩ","value":"network"}]
 LAYOUT_ITEMS= [{"title":"HH — Les Paul","value":"HH"},{"title":"HSS — Strat","value":"HSS"},
                {"title":"HHS","value":"HHS"},{"title":"SSS — 3× single","value":"SSS"},
-               {"title":"H — solo HB","value":"H"},{"title":"SS — Telecaster","value":"SS"}]
+               {"title":"H — solo HB","value":"H"},{"title":"SS — Telecaster","value":"SS"},
+               {"title":"PP — P90 × 2","value":"PP"}]
 WIRING_ITEMS= [{"title":"50s wiring","value":"50s"},{"title":"Modern wiring","value":"modern"}]
 
 def _toggle_options(n):

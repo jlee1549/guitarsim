@@ -229,4 +229,9 @@ LAYOUTS = {
                          {"pos":"bridge", "type":"single", "polarity": 1}],
              "shared_vol": True,
              "tone_map":   ["tone1", "tone1"]},
+
+    "PP":  {"pickups": [{"pos":"neck",   "type":"p90", "polarity": 1},
+                         {"pos":"bridge", "type":"p90", "polarity": 1}],
+             "shared_vol": False,
+             "tone_map":   ["tone1", "tone2"]},
 }
