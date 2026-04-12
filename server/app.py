@@ -546,7 +546,40 @@ function playWav(b64){
   }catch(e){console.warn('playWav',e);}
 }
 
-// ── Wiring diagram pan/zoom (CSS transform on <img>) ──────────────────────
+// ── Panel divider drag ────────────────────────────────────────────────────
+(function(){
+  var dragging=false, startX=0, startW=0;
+  function initDivider(){
+    var divider = document.getElementById('panel-divider');
+    var panel   = document.getElementById('wiring-panel');
+    if(!divider || !panel){ setTimeout(initDivider, 300); return; }
+    divider.addEventListener('mousedown', function(e){
+      dragging=true;
+      startX=e.clientX;
+      startW=panel.getBoundingClientRect().width;
+      divider.style.background='#b0b0a8';
+      document.body.style.cursor='col-resize';
+      document.body.style.userSelect='none';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', function(e){
+      if(!dragging) return;
+      var newW = Math.max(160, Math.min(700, startW + (e.clientX - startX)));
+      panel.style.flexBasis = newW+'px';
+    });
+    window.addEventListener('mouseup', function(){
+      if(!dragging) return;
+      dragging=false;
+      divider.style.background='';
+      document.body.style.cursor='';
+      document.body.style.userSelect='';
+    });
+    // Hover highlight
+    divider.addEventListener('mouseenter', function(){ divider.style.background='#c8c8c0'; });
+    divider.addEventListener('mouseleave', function(){ if(!dragging) divider.style.background=''; });
+  }
+  initDivider();
+})();
 (function(){
   var scale=1, tx=0, ty=0, dragging=false, lx=0, ly=0;
   var img=null;
@@ -632,7 +665,7 @@ poll();
                 with v.VContainer(fluid=True, classes="pa-0", style="height:calc(100vh - 64px);display:flex;flex-direction:row;overflow:hidden;"):
 
                     # ── LEFT: wiring diagram (pan/zoom) ─────────────────
-                    with html.Div(style="width:320px;flex-shrink:0;overflow:hidden;background:#f8f8f6;border-right:1px solid #e0e0da;position:relative;height:100%;"):
+                    with html.Div(id="wiring-panel", style="flex-basis:320px;flex-shrink:0;flex-grow:0;overflow:hidden;background:#f8f8f6;position:relative;height:100%;"):
                         # Zoom controls overlay
                         with html.Div(style="position:absolute;top:6px;right:6px;z-index:10;display:flex;flex-direction:column;gap:3px;"):
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
@@ -657,6 +690,13 @@ poll();
                             src=("wiring_src",),
                             style="width:100%;height:100%;object-fit:contain;cursor:grab;display:block;",
                         )
+
+                    # ── DIVIDER ──────────────────────────────────────────
+                    html.Div(id="panel-divider",
+                             style="width:5px;flex-shrink:0;cursor:col-resize;background:#e0e0da;"
+                                   "border-left:1px solid #d0d0c8;border-right:1px solid #d0d0c8;"
+                                   "transition:background 0.15s;",
+                             __events=["mousedown"])
 
                     # ── RIGHT: controls + scope ──────────────────────────
                     with html.Div(style="flex:1;overflow-y:auto;display:flex;flex-direction:column;"):
