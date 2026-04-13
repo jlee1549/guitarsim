@@ -755,6 +755,10 @@ poll();
                                     html.Div("{{ status_msg }}",classes="text-caption text-medium-emphasis")
                                     html.Div("Peak: {{ chart_stats.peak }} Hz  |  1 kHz: {{ chart_stats.db1k }} dB  4 kHz: {{ chart_stats.db4k }} dB",
                                              classes="text-caption text-medium-emphasis font-weight-medium")
+                                    html.Div("{{ chart_note }}",
+                                             v_show="chart_note",
+                                             classes="text-caption font-italic",
+                                             style="color:#F9A825;")
 
                         # ── Plotly FR scope (fills remaining height) ─────
                         with html.Div(style="flex:1;min-height:280px;padding:0 8px 8px;"):

@@ -49,7 +49,8 @@ def _dot(x, y, r=3, fill=HOT):
     return _circle(x, y, r, fill=fill, stroke=fill, sw=0)
 
 # ── Pickup ────────────────────────────────────────────────────────────────────
-def draw_pickup(x, y, w, h, pos, ptype, coil_config, coil_side, polarity, active):
+def draw_pickup(x, y, w, h, pos, ptype, coil_config, coil_side, polarity, active,
+                height_mm=2.5, tbleed="none"):
     col  = COMP_BD if active else INACTIVE
     tcol = LABEL   if active else INACTIVE
     s = _rect(x, y, w, h, rx=5, fill=COMP_BG, stroke=col, sw=1.5)
@@ -78,6 +79,13 @@ def draw_pickup(x, y, w, h, pos, ptype, coil_config, coil_side, polarity, active
             s += _path(f"M{cx-loop_r:.1f} {loop_y:.1f} A{loop_r} {loop_r} 0 0 1 {cx+loop_r:.1f} {loop_y:.1f}", stroke=lc, sw=1.5)
     by = loop_y + loop_r + 3
     s += _rect(x+8, by, w-16, 5, rx=2, fill="#e8e8e8" if active else "#f0f0f0", stroke=col, sw=1)
+    # Height annotation
+    h_col = "#c04020" if height_mm < 1.8 else (SUB if active else INACTIVE)
+    s += _text(x+4, by+14, f"h:{height_mm:.1f}mm", size=7, fill=h_col, anchor="start")
+    # Treble bleed annotation
+    if tbleed != "none" and active:
+        tb_str = "TB cap" if tbleed == "cap" else "TB RC"
+        s += _text(x+w-4, by+14, tb_str, size=7, fill="#1a5fa8", anchor="end")
     hot_y = y + h//2 - 6; gnd_y = y + h//2 + 10
     s += _circle(x+w, hot_y, 3.5, fill=HOT if active else INACTIVE, stroke=HOT if active else INACTIVE)
     s += _text(x+w+5, hot_y, "hot", size=7, fill=HOT if active else INACTIVE, anchor="start")
@@ -117,16 +125,35 @@ def draw_cap(cx, y, h=36, label="22nF", active=True):
     return s, (cx, p1y), (cx, p2y)
 
 # ── Output jack ───────────────────────────────────────────────────────────────
-def draw_jack(x, y, w=60, h=44):
+def draw_jack(x, y, w=60, h=56):
+    """
+    Output jack drawn with signal entering left side.
+    Returns (svg, input_lug, sleeve_lug) where:
+      input_lug = left-centre of box (signal wire connects here)
+      sleeve_lug = bottom-centre (ground wire connects here)
+    """
     s  = _rect(x, y, w, h, rx=5, fill=COMP_BG, stroke=COMP_BD, sw=1.2)
-    s += _text(x+w/2, y+12, "Output", size=9, fill=LABEL, weight="500")
-    s += _text(x+w/2, y+24, "jack",   size=9, fill=LABEL)
-    tip = (x+w/4, y+h); slv = (x+3*w/4, y+h)
-    s += _circle(tip[0], tip[1], 3, fill=SIG, stroke=SIG)
-    s += _text(tip[0], tip[1]+9, "tip", size=7, fill=SIG)
+    s += _text(x+w/2, y+14, "Output", size=9, fill=LABEL, weight="500")
+    s += _text(x+w/2, y+26, "jack",   size=9, fill=LABEL)
+    # Jack symbol: circle with centre dot
+    jcx, jcy, jr = x+w/2, y+h-16, 8
+    s += _circle(jcx, jcy, jr, fill="#f0f0f0", stroke=COMP_BD, sw=1)
+    s += _circle(jcx, jcy, 2.5, fill=COMP_BD, stroke=COMP_BD, sw=0)
+    # Tip label (top of circle) and sleeve label (outside)
+    s += _text(jcx, jcy-jr-5, "tip", size=7, fill=SIG)
+    s += _text(jcx+jr+4, jcy, "slv", size=7, fill=GND_COL, anchor="start")
+    # Input lug: left-centre of box
+    inp = (x, y + h/2)
+    s += _circle(inp[0], inp[1], 3, fill=SIG, stroke=SIG)
+    # Sleeve lug: right side of circle (to ground)
+    slv = (jcx+jr, jcy)
     s += _circle(slv[0], slv[1], 3, fill=GND_COL, stroke=GND_COL)
-    s += _text(slv[0], slv[1]+9, "slv", size=7, fill=GND_COL)
-    return s, tip, slv
+    # Internal wire: input lug → top of jack circle (tip)
+    tip_top = (jcx, jcy-jr)
+    s += _line(inp[0], inp[1], x+8, inp[1], stroke=SIG, sw=1)
+    s += _line(x+8, inp[1], x+8, tip_top[1], stroke=SIG, sw=1)
+    s += _line(x+8, tip_top[1], tip_top[0], tip_top[1], stroke=SIG, sw=1)
+    return s, inp, slv
 
 
 # ── Selector switch ───────────────────────────────────────────────────────────
@@ -157,7 +184,7 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
     POT_W, POT_H = 110, 56
     ROW_GAP      = 28
     CAP_H, CAP_GAP = 36, 8
-    JACK_W, JACK_H = 60, 44
+    JACK_W, JACK_H = 60, 56
     SW_R         = 18
     ROW_H        = max(PU_H, POT_H + CAP_GAP + CAP_H) + ROW_GAP
     COL_A        = 10
@@ -197,7 +224,10 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         svg_pu, hot_lug, gnd_lug = draw_pickup(
             COL_A, ry, PU_W, PU_H,
             p["pos"], p["type"], p["coil_config"], p["coil_side"],
-            p["polarity"], act)
+            p["polarity"], act,
+            height_mm=p.get("height_mm", 2.5),
+            tbleed=p.get("tbleed", "none"),
+        )
         s += svg_pu
         hot_lugs.append((hot_lug[0], hot_lug[1], act))
         gx = COL_A + PU_W + 8
@@ -284,9 +314,11 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         jack_x_pos = last_tcx + POT_W + 24
         jack_y     = vol_pot_y + (POT_H-JACK_H)//2
         s += _line(vl2[0], vl2[1], jack_x_pos, vl2[1], stroke=SIG, sw=WIRE_W)
-        svg_jack, tip, slv = draw_jack(jack_x_pos, jack_y, JACK_W, JACK_H)
+        svg_jack, inp, slv = draw_jack(jack_x_pos, jack_y, JACK_W, JACK_H)
         s += svg_jack
-        s += _line(jack_x_pos, vl2[1], tip[0], tip[1], stroke=SIG, sw=WIRE_W)
+        # vl2 (vol wiper) arrives horizontally at inp (jack left side)
+        if abs(vl2[1] - inp[1]) > 1:
+            s += _line(jack_x_pos, vl2[1], jack_x_pos, inp[1], stroke=SIG, sw=WIRE_W)
         s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
         s += _gnd(slv[0], GND_Y)
 
@@ -362,14 +394,23 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         mid_y  = (min(wiper_ys)+max(wiper_ys))/2
         jack_y = mid_y - JACK_H/2
         s += _line(sig_bus_x, mid_y, JACK_X, mid_y, stroke=SIG, sw=WIRE_W)
-        svg_jack, tip, slv = draw_jack(JACK_X, jack_y, JACK_W, JACK_H)
+        svg_jack, inp, slv = draw_jack(JACK_X, jack_y, JACK_W, JACK_H)
         s += svg_jack
-        s += _line(JACK_X, mid_y, tip[0], tip[1], stroke=SIG, sw=WIRE_W)
+        # Signal bus connects to jack input lug (left side)
+        # inp is already at (JACK_X, jack_y+JACK_H/2) = left centre
         s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
         s += _gnd(slv[0], GND_Y)
 
     note = ("50s: tone shunts at vol wiper" if wiring=="50s"
             else "Modern: tone shunts at vol input lug")
     s += _text(width/2, total_h-10, note, size=8, fill=SUB, italic=True)
+
+    # Colour legend (bottom-left)
+    lx, ly = 10, total_h - 38
+    for col, label in [(HOT,"hot"), (SIG,"signal"), (TONE_C,"tone"), (GND_COL,"ground")]:
+        s += _line(lx, ly, lx+16, ly, stroke=col, sw=2)
+        s += _text(lx+20, ly, label, size=7, fill=SUB, anchor="start")
+        lx += 64
+
     s += "</svg>"
     return s
