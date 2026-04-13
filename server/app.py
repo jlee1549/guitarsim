@@ -602,6 +602,11 @@ function playWav(b64){
     img.style.userSelect = 'none';
     img.style.cursor = 'grab';
 
+    // Wire zoom buttons by title attribute (Vue click= doesn't reach window globals)
+    document.querySelectorAll('button[title="Zoom in"]') .forEach(b => b.addEventListener('click', window.wiringZoomIn));
+    document.querySelectorAll('button[title="Zoom out"]').forEach(b => b.addEventListener('click', window.wiringZoomOut));
+    document.querySelectorAll('button[title="Reset view"]').forEach(b => b.addEventListener('click', window.wiringZoomReset));
+
     // Reset zoom/pan whenever the SVG source changes (layout switch)
     var srcObs = new MutationObserver(function(){
       if(img.src !== lastSrc){ lastSrc=img.src; window.wiringZoomReset(); }
@@ -669,13 +674,13 @@ poll();
                         # Zoom controls overlay
                         with html.Div(style="position:absolute;top:6px;right:6px;z-index:10;display:flex;flex-direction:column;gap:3px;"):
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
-                                   click="wiringZoomIn()", title="Zoom in"):
+                                   click="window.wiringZoomIn && window.wiringZoomIn()", title="Zoom in"):
                                 v.VIcon("mdi-plus", size="14")
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
-                                   click="wiringZoomOut()", title="Zoom out"):
+                                   click="window.wiringZoomOut && window.wiringZoomOut()", title="Zoom out"):
                                 v.VIcon("mdi-minus", size="14")
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
-                                   click="wiringZoomReset()", title="Reset view"):
+                                   click="window.wiringZoomReset && window.wiringZoomReset()", title="Reset view"):
                                 v.VIcon("mdi-fit-to-screen-outline", size="14")
                         # The diagram — img tag avoids trame SVG sanitisation
                         html.Img(
