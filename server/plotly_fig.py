@@ -101,6 +101,11 @@ def make_fr_figure(freqs, cur_db, ref_db=None, audio_db=None, audio_ref_db=None,
         ),
         hovermode="x unified",
         hoverlabel=dict(bgcolor="#ffffff", font=dict(color="#333", size=11)),
+        shapes=[dict(
+            type="line", xref="paper", yref="y",
+            x0=0, x1=1, y0=0, y1=0,
+            line=dict(color="#cccccc", width=1, dash="dot"),
+        )],
     )
     if height:
         layout_args["height"] = height

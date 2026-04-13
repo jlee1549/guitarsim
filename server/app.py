@@ -583,11 +583,16 @@ function playWav(b64){
 })();
 (function(){
   var scale=1, tx=0, ty=0, dragging=false, lx=0, ly=0;
-  var img=null;
+  var img=null, lastSrc='';
 
   function applyTransform(){
     if(img) img.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')';
   }
+
+  // Exposed globally so Vue click= expressions can call them directly
+  window.wiringZoomIn    = function(){ scale=Math.min(8,scale*1.25); applyTransform(); };
+  window.wiringZoomOut   = function(){ scale=Math.max(0.2,scale/1.25); applyTransform(); };
+  window.wiringZoomReset = function(){ scale=1; tx=0; ty=0; applyTransform(); };
 
   function initPanZoom(){
     img = document.getElementById('wiring-container');
@@ -597,42 +602,36 @@ function playWav(b64){
     img.style.userSelect = 'none';
     img.style.cursor = 'grab';
 
-    // Mouse wheel zoom
+    // Reset zoom/pan whenever the SVG source changes (layout switch)
+    var srcObs = new MutationObserver(function(){
+      if(img.src !== lastSrc){ lastSrc=img.src; window.wiringZoomReset(); }
+    });
+    srcObs.observe(img, {attributes:true, attributeFilter:['src']});
+
     img.parentElement.addEventListener('wheel', function(e){
       e.preventDefault();
-      var rect = img.getBoundingClientRect();
-      var mx = e.clientX - rect.left - tx;
-      var my = e.clientY - rect.top  - ty;
-      var delta = e.deltaY < 0 ? 1.15 : 1/1.15;
-      var newScale = Math.min(8, Math.max(0.2, scale*delta));
-      tx -= mx*(newScale/scale - 1);
-      ty -= my*(newScale/scale - 1);
-      scale = newScale;
+      var rect=img.getBoundingClientRect();
+      var mx=e.clientX-rect.left-tx, my=e.clientY-rect.top-ty;
+      var delta=e.deltaY<0?1.15:1/1.15;
+      var ns=Math.min(8,Math.max(0.2,scale*delta));
+      tx-=mx*(ns/scale-1); ty-=my*(ns/scale-1); scale=ns;
       applyTransform();
     }, {passive:false});
 
-    // Drag to pan
     img.addEventListener('mousedown', function(e){
       dragging=true; lx=e.clientX; ly=e.clientY;
       img.style.cursor='grabbing'; e.preventDefault();
     });
     window.addEventListener('mousemove', function(e){
       if(!dragging) return;
-      tx += e.clientX-lx; ty += e.clientY-ly;
-      lx=e.clientX; ly=e.clientY;
+      tx+=e.clientX-lx; ty+=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       applyTransform();
     });
     window.addEventListener('mouseup', function(){
       dragging=false; if(img) img.style.cursor='grab';
     });
-
-    // Button controls
-    document.getElementById('wiring-zoom-in') .onclick = function(){ scale=Math.min(8,scale*1.25); applyTransform(); };
-    document.getElementById('wiring-zoom-out').onclick = function(){ scale=Math.max(0.2,scale/1.25); applyTransform(); };
-    document.getElementById('wiring-zoom-reset').onclick = function(){ scale=1; tx=0; ty=0; applyTransform(); };
   }
 
-  // Wait for element to exist
   function tryInit(){
     if(document.getElementById('wiring-container')) initPanZoom();
     else setTimeout(tryInit, 300);
@@ -670,21 +669,14 @@ poll();
                         # Zoom controls overlay
                         with html.Div(style="position:absolute;top:6px;right:6px;z-index:10;display:flex;flex-direction:column;gap:3px;"):
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
-                                   click="document.getElementById('wiring-zoom-in').click()",
-                                   title="Zoom in"):
+                                   click="wiringZoomIn()", title="Zoom in"):
                                 v.VIcon("mdi-plus", size="14")
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
-                                   click="document.getElementById('wiring-zoom-out').click()",
-                                   title="Zoom out"):
+                                   click="wiringZoomOut()", title="Zoom out"):
                                 v.VIcon("mdi-minus", size="14")
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
-                                   click="document.getElementById('wiring-zoom-reset').click()",
-                                   title="Reset"):
+                                   click="wiringZoomReset()", title="Reset view"):
                                 v.VIcon("mdi-fit-to-screen-outline", size="14")
-                        # Hidden control targets (easier than calling svgPanZoom API from Vue click)
-                        html.Div(id="wiring-zoom-in",  style="display:none")
-                        html.Div(id="wiring-zoom-out", style="display:none")
-                        html.Div(id="wiring-zoom-reset",style="display:none")
                         # The diagram — img tag avoids trame SVG sanitisation
                         html.Img(
                             id="wiring-container",
