@@ -614,11 +614,13 @@ function playWav(b64){
     srcObs.observe(img, {attributes:true, attributeFilter:['src']});
 
     img.parentElement.addEventListener('wheel', function(e){
+      // Only intercept wheel for zoom when Ctrl held or already zoomed in
+      if(!e.ctrlKey && scale <= 1.05) return;
       e.preventDefault();
       var rect=img.getBoundingClientRect();
       var mx=e.clientX-rect.left-tx, my=e.clientY-rect.top-ty;
       var delta=e.deltaY<0?1.15:1/1.15;
-      var ns=Math.min(8,Math.max(0.2,scale*delta));
+      var ns=Math.min(8,Math.max(0.5,scale*delta));
       tx-=mx*(ns/scale-1); ty-=my*(ns/scale-1); scale=ns;
       applyTransform();
     }, {passive:false});
@@ -670,7 +672,7 @@ poll();
                 with v.VContainer(fluid=True, classes="pa-0", style="height:calc(100vh - 64px);display:flex;flex-direction:row;overflow:hidden;"):
 
                     # ── LEFT: wiring diagram (pan/zoom) ─────────────────
-                    with html.Div(id="wiring-panel", style="flex-basis:320px;flex-shrink:0;flex-grow:0;overflow:hidden;background:#f8f8f6;position:relative;height:100%;"):
+                    with html.Div(id="wiring-panel", style="flex-basis:320px;flex-shrink:0;flex-grow:0;overflow:auto;background:#f8f8f6;position:relative;height:100%;"):
                         # Zoom controls overlay
                         with html.Div(style="position:absolute;top:6px;right:6px;z-index:10;display:flex;flex-direction:column;gap:3px;"):
                             with v.VBtn(icon=True, size="x-small", variant="tonal",
@@ -686,7 +688,7 @@ poll();
                         html.Img(
                             id="wiring-container",
                             src=("wiring_src",),
-                            style="width:100%;height:100%;object-fit:contain;cursor:grab;display:block;",
+                            style="width:100%;height:auto;display:block;cursor:grab;",
                         )
 
                     # ── DIVIDER ──────────────────────────────────────────
