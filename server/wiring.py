@@ -1,10 +1,16 @@
 """
 wiring.py — SVG wiring diagram generator for guitar circuit simulator.
-Light background, guitarist-readable schematic style.
+
+Layout philosophy: flow-based, left-to-right signal chain.
+Each stage is placed at x = previous_right + gap. No hardcoded column offsets.
+
+Signal chain:
+  Pickups → [Selector Switch] → [Vol] → [Tone+Cap] → Jack
+  (switch before vol for shared-vol; after vol-bus for independent-vol)
 """
 import math
 
-# ── Palette ──────────────────────────────────────────────────────────────────
+# ── Palette ───────────────────────────────────────────────────────────────────
 BG       = "#f8f8f6"
 HOT      = "#1a1a1a"
 GND_COL  = "#888888"
@@ -17,6 +23,7 @@ SUB      = "#666666"
 INACTIVE = "#cccccc"
 WIRE_W   = 1.8
 
+# ── Primitives ────────────────────────────────────────────────────────────────
 def _line(x1, y1, x2, y2, stroke=HOT, sw=WIRE_W, dash=""):
     d = f' stroke-dasharray="{dash}"' if dash else ""
     return (f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
@@ -33,7 +40,8 @@ def _text(x, y, txt, size=10, fill=LABEL, anchor="middle", weight="normal", ital
             f'font-family="system-ui" dominant-baseline="central">{txt}</text>')
 
 def _circle(x, y, r, fill=COMP_BG, stroke=COMP_BD, sw=1):
-    return f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>'
+    return (f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" '
+            f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
 
 def _path(d, stroke=COMP_BD, sw=1.5, fill="none"):
     return f'<path d="{d}" stroke="{stroke}" stroke-width="{sw}" fill="{fill}"/>'
@@ -48,7 +56,10 @@ def _gnd(x, y):
 def _dot(x, y, r=3, fill=HOT):
     return _circle(x, y, r, fill=fill, stroke=fill, sw=0)
 
-# ── Pickup ────────────────────────────────────────────────────────────────────
+# ── Component drawers ─────────────────────────────────────────────────────────
+# Each returns (svg_string, named_lugs_dict)
+# Lugs are (x, y) connection points.
+
 def draw_pickup(x, y, w, h, pos, ptype, coil_config, coil_side, polarity, active,
                 height_mm=2.5, tbleed="none"):
     col  = COMP_BD if active else INACTIVE
@@ -62,8 +73,8 @@ def draw_pickup(x, y, w, h, pos, ptype, coil_config, coil_side, polarity, active
     loop_r = 6
     if ptype == "humbucker" and coil_config == "split":
         for ci in range(2):
-            active_coil = (ci==0 and coil_side=="outer") or (ci==1 and coil_side=="inner")
-            cc = COMP_BD if (active and active_coil) else INACTIVE
+            ac = (ci==0 and coil_side=="outer") or (ci==1 and coil_side=="inner")
+            cc = COMP_BD if (active and ac) else INACTIVE
             lx = x + 8 + ci*(w/2-4)
             for i in range(3):
                 cx = lx + i*loop_r*2 + loop_r
@@ -71,34 +82,29 @@ def draw_pickup(x, y, w, h, pos, ptype, coil_config, coil_side, polarity, active
         mx = x + w/2
         s += _line(mx, y+h/2-6, mx, y+h/2+14, stroke="#cccccc", sw=1, dash="3 2")
     else:
-        n = 5 if ptype in ("single","p90") else 6
-        total = n*loop_r*2; lx0 = x+(w-total)/2
+        nc = 5 if ptype in ("single","p90") else 6
+        total = nc*loop_r*2; lx0 = x+(w-total)/2
         lc = COMP_BD if active else INACTIVE
-        for i in range(n):
+        for i in range(nc):
             cx = lx0 + i*loop_r*2 + loop_r
             s += _path(f"M{cx-loop_r:.1f} {loop_y:.1f} A{loop_r} {loop_r} 0 0 1 {cx+loop_r:.1f} {loop_y:.1f}", stroke=lc, sw=1.5)
     by = loop_y + loop_r + 3
     s += _rect(x+8, by, w-16, 5, rx=2, fill="#e8e8e8" if active else "#f0f0f0", stroke=col, sw=1)
-    # Height annotation
     h_col = "#c04020" if height_mm < 1.8 else (SUB if active else INACTIVE)
     s += _text(x+4, by+14, f"h:{height_mm:.1f}mm", size=7, fill=h_col, anchor="start")
-    # Treble bleed annotation
     if tbleed != "none" and active:
-        tb_str = "TB cap" if tbleed == "cap" else "TB RC"
-        s += _text(x+w-4, by+14, tb_str, size=7, fill="#1a5fa8", anchor="end")
-    hot_y = y + h//2 - 6; gnd_y = y + h//2 + 10
+        s += _text(x+w-4, by+14, "TB cap" if tbleed=="cap" else "TB RC", size=7, fill=SIG, anchor="end")
+    hot_y = y + h//2 - 6
+    gnd_y = y + h//2 + 10
     s += _circle(x+w, hot_y, 3.5, fill=HOT if active else INACTIVE, stroke=HOT if active else INACTIVE)
-    s += _text(x+w+5, hot_y, "hot", size=7, fill=HOT if active else INACTIVE, anchor="start")
     s += _circle(x+w, gnd_y, 3.5, fill=GND_COL, stroke=GND_COL)
-    s += _text(x+w+5, gnd_y, "gnd", size=7, fill=GND_COL, anchor="start")
-    return s, (x+w, hot_y), (x+w, gnd_y)
+    # hot lug on right edge, gnd lug on right edge below
+    return s, {"hot": (x+w, hot_y), "gnd": (x+w, gnd_y), "right": x+w}
 
-# ── Pot (horizontal resistor + wiper arrow) ───────────────────────────────────
 def draw_pot(x, y, w, h, label, value_pct, pot_type="vol", active=True):
     col  = COMP_BD if active else INACTIVE
     tcol = LABEL   if active else INACTIVE
-    scol = SIG if pot_type=="vol" else TONE_C
-    if not active: scol = INACTIVE
+    scol = (SIG if pot_type=="vol" else TONE_C) if active else INACTIVE
     s = _rect(x, y, w, h, rx=4, fill=COMP_BG, stroke=col, sw=1.2)
     s += _text(x+w/2, y+10, label, size=9, fill=tcol, weight="500")
     tx, ty, tw, th = x+8, y+h//2-4, w-16, 8
@@ -108,19 +114,18 @@ def draw_pot(x, y, w, h, label, value_pct, pot_type="vol", active=True):
     s += _line(wx, ay1, wx, ay2, stroke=scol, sw=1.5)
     s += _path(f"M{wx-4:.1f} {ay1+5:.1f} L{wx:.1f} {ay1:.1f} L{wx+4:.1f} {ay1+5:.1f}", stroke=scol, sw=1.5)
     s += _text(x+w/2, y+h-8, f"{int(value_pct)}%", size=8, fill=scol)
-    # Fixed output terminal at bottom-centre of pot box (wiper connects to it internally)
-    out_x = x + w/2
-    out_y = y + h
-    s += _line(wx, ay2, out_x, ay2, stroke=scol, sw=1, dash="2 2")  # internal stub
-    s += _line(out_x, ay2, out_x, out_y, stroke=scol, sw=1.5)        # exit wire
-    l1 = (tx, ty+th/2); l3 = (tx+tw, ty+th/2)
-    l2 = (out_x, out_y)   # fixed output point at bottom-centre
-    s += _circle(l1[0], l1[1], 3, fill=HOT, stroke=HOT)
-    s += _circle(l3[0], l3[1], 3, fill=GND_COL, stroke=GND_COL)
-    s += _circle(l2[0], l2[1], 3, fill=scol, stroke=scol)
-    return s, l1, l2, l3
+    # Fixed output terminal at bottom-centre; dashed internal stub from wiper
+    out_x = x + w/2; out_y = y + h
+    s += _line(wx, ay2, out_x, ay2, stroke=scol, sw=1, dash="2 2")
+    s += _line(out_x, ay2, out_x, out_y, stroke=scol, sw=1.5)
+    l1 = (tx,       ty+th/2)   # input lug  (left end of track)
+    l3 = (tx+tw,    ty+th/2)   # gnd lug    (right end of track)
+    l2 = (out_x,    out_y)     # output lug (bottom-centre, fixed)
+    s += _circle(l1[0], l1[1], 3, fill=HOT,    stroke=HOT)
+    s += _circle(l3[0], l3[1], 3, fill=GND_COL,stroke=GND_COL)
+    s += _circle(l2[0], l2[1], 3, fill=scol,   stroke=scol)
+    return s, {"in": l1, "out": l2, "gnd": l3, "right": x+w}
 
-# ── Tone cap ──────────────────────────────────────────────────────────────────
 def draw_cap(cx, y, h=36, label="22nF", active=True):
     col = COMP_BD if active else INACTIVE
     pw = 28; gap = 7
@@ -128,43 +133,32 @@ def draw_cap(cx, y, h=36, label="22nF", active=True):
     s  = _line(cx-pw/2, p1y, cx+pw/2, p1y, stroke=col, sw=3)
     s += _line(cx-pw/2, p2y, cx+pw/2, p2y, stroke=col, sw=3)
     s += _text(cx+pw/2+4, y+h/2, label, size=8, fill=col, anchor="start")
-    return s, (cx, p1y), (cx, p2y)
+    return s, {"top": (cx, p1y), "bot": (cx, p2y)}
 
-# ── Output jack ───────────────────────────────────────────────────────────────
 def draw_jack(x, y, w=60, h=56):
-    """
-    Output jack drawn with signal entering left side.
-    Returns (svg, input_lug, sleeve_lug) where:
-      input_lug = left-centre of box (signal wire connects here)
-      sleeve_lug = bottom-centre (ground wire connects here)
-    """
+    """Signal enters from left (inp lug). Sleeve exits right of jack circle to ground."""
     s  = _rect(x, y, w, h, rx=5, fill=COMP_BG, stroke=COMP_BD, sw=1.2)
     s += _text(x+w/2, y+14, "Output", size=9, fill=LABEL, weight="500")
     s += _text(x+w/2, y+26, "jack",   size=9, fill=LABEL)
-    # Jack symbol: circle with centre dot
     jcx, jcy, jr = x+w/2, y+h-16, 8
     s += _circle(jcx, jcy, jr, fill="#f0f0f0", stroke=COMP_BD, sw=1)
     s += _circle(jcx, jcy, 2.5, fill=COMP_BD, stroke=COMP_BD, sw=0)
-    # Tip label (top of circle) and sleeve label (outside)
     s += _text(jcx, jcy-jr-5, "tip", size=7, fill=SIG)
     s += _text(jcx+jr+4, jcy, "slv", size=7, fill=GND_COL, anchor="start")
-    # Input lug: left-centre of box
-    inp = (x, y + h/2)
-    s += _circle(inp[0], inp[1], 3, fill=SIG, stroke=SIG)
-    # Sleeve lug: right side of circle (to ground)
+    inp = (x, y+h/2)
     slv = (jcx+jr, jcy)
+    s += _circle(inp[0], inp[1], 3, fill=SIG,     stroke=SIG)
     s += _circle(slv[0], slv[1], 3, fill=GND_COL, stroke=GND_COL)
-    # Internal wire: input lug → top of jack circle (tip)
     tip_top = (jcx, jcy-jr)
-    s += _line(inp[0], inp[1], x+8, inp[1], stroke=SIG, sw=1)
-    s += _line(x+8, inp[1], x+8, tip_top[1], stroke=SIG, sw=1)
-    s += _line(x+8, tip_top[1], tip_top[0], tip_top[1], stroke=SIG, sw=1)
-    return s, inp, slv
+    s += _line(inp[0], inp[1], x+8, inp[1],         stroke=SIG, sw=1)
+    s += _line(x+8, inp[1],    x+8, tip_top[1],     stroke=SIG, sw=1)
+    s += _line(x+8, tip_top[1],tip_top[0],tip_top[1],stroke=SIG,sw=1)
+    return s, {"inp": inp, "slv": slv, "right": x+w}
 
-
-# ── Selector switch ───────────────────────────────────────────────────────────
-def draw_selector_switch(cx, cy, n_pos, active_pos, label="selector"):
+def draw_selector_switch(cx, cy, n_pos, active_pos):
+    """Rotary switch. Input lug on left, output on right."""
     r = 18
+    label = f"{n_pos}-way"
     s = _circle(cx, cy, r, fill=COMP_BG, stroke=COMP_BD, sw=1.2)
     s += _text(cx, cy+r+9, label, size=8, fill=SUB)
     spread = 140; start = -90 - spread/2
@@ -178,83 +172,138 @@ def draw_selector_switch(cx, cy, n_pos, active_pos, label="selector"):
     s += _line(cx, cy, cx+ex, cy+ey, stroke=HOT, sw=1.5)
     s += _circle(cx, cy, 3, fill=HOT, stroke=HOT, sw=0)
     inp = (cx-r, cy); out = (cx+r, cy)
-    s += _circle(inp[0], inp[1], 3, fill=HOT,  stroke=HOT)
+    s += _circle(inp[0], inp[1], 3, fill=HOT, stroke=HOT)
     s += _circle(out[0], out[1], 3, fill=SIG, stroke=SIG)
-    return s, inp, out
+    return s, {"inp": inp, "out": out, "right": cx+r}
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Layout constants (sizes only, no positions) ───────────────────────────────
+PU_W, PU_H   = 120, 80
+POT_W, POT_H = 110, 56
+CAP_H, CAP_GAP = 36, 8
+SW_R         = 18
+JACK_W, JACK_H = 60, 56
+GAP          = 24   # horizontal gap between stages
+ROW_GAP      = 28   # vertical gap between pickup rows
+
+# ROW_H accommodates pickup box AND pot + cap below it
+ROW_H = max(PU_H, POT_H + CAP_GAP + CAP_H) + ROW_GAP
+
 def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
                     tone_map, width=None):
-    n            = len(pu_data)
-    PU_W, PU_H   = 120, 80
-    POT_W, POT_H = 110, 56
-    ROW_GAP      = 28
-    CAP_H, CAP_GAP = 36, 8
-    JACK_W, JACK_H = 60, 56
-    SW_R         = 18
-    ROW_H        = max(PU_H, POT_H + CAP_GAP + CAP_H) + ROW_GAP
-    COL_A        = 10
-    COL_B        = 165
-    COL_C        = 300
-    JACK_X       = 470   # wider to accommodate 3-way switch for HH/SS/PP
-    top_margin   = 20
-    bot_margin   = 60
+    """
+    Flow-based layout: every x-position is computed from the previous stage's
+    right edge + GAP. No hardcoded column numbers.
 
+    Independent-vol signal chain (HH, PP, H, SS-indep):
+      Pickups | vol-bus | [3-way switch] | Jack
+      each pickup row: Pickup → Vol → Tone → Cap (stacked vertically)
+
+    Shared-vol signal chain (SSS, HSS, HHS, SS-shared):
+      Pickups | hot-bus | [5-way switch] | Master-Vol | Tone(s)+Cap(s) | Jack
+    """
+    n = len(pu_data)
+    top_margin = 24
+    bot_margin = 68   # room for ground symbols + legend
+
+    # Count unique tone slots for shared-vol width planning
     n_tones = 0
     if shared_vol:
-        seen_t = set()
+        seen = set()
         for i in range(n):
             tm = tone_map[i] if i < len(tone_map) else ""
-            if tm and tm not in seen_t:
-                seen_t.add(tm); n_tones += 1
+            if tm and tm not in seen:
+                seen.add(tm); n_tones += 1
 
-    if width is None:
-        if shared_vol:
-            width = COL_C + n_tones*(POT_W+16) + JACK_W + 40
+    # ── Compute stage x-positions flowing left to right ───────────────────
+    x = GAP  # start x for pickups
+
+    # Stage 1: Pickups (tallest row * n)
+    pu_x = x
+    x = pu_x + PU_W + GAP
+
+    if shared_vol:
+        # Stage 2a: Selector switch (shared-vol: before vol)
+        sw_x = x + SW_R         # cx of switch circle
+        x = sw_x + SW_R + GAP
+
+        # Stage 2b: Master vol pot
+        vol_x = x
+        x = vol_x + POT_W + GAP
+
+        # Stage 2c: Tone pots (one per unique tone slot)
+        tone_xs = []
+        for _ in range(n_tones):
+            tone_xs.append(x)
+            x += POT_W + GAP
+
+    else:
+        # Stage 2a: Vol pots (per pickup, at same x; stacked vertically in rows)
+        vol_x = x
+        x = vol_x + POT_W + GAP
+
+        # Stage 2b: Tone pots + caps (per pickup, stacked)
+        # Only if any pickup has a tone pot
+        has_any_tone = any(p.get("has_tone", True) for p in pu_data)
+        tone_x = x if has_any_tone else None
+        if has_any_tone:
+            x = tone_x + POT_W + GAP
+
+        # Stage 2c: Signal collection bus
+        bus_x = x
+        x = bus_x + GAP
+
+        # Stage 2d: Selector switch (independent-vol: after vol-bus, only if n>1)
+        if n > 1:
+            sw_x = x + SW_R
+            x = sw_x + SW_R + GAP
         else:
-            # sig_bus_x = JACK_X - 12, but for switch layouts we compute dynamically
-            # For n>1: bus(JACK_X-12) + SW_R*2+20 + JACK_W + 16
-            # For n==1: bus + short gap + JACK_W + 16
-            if n > 1:
-                bus_x = COL_C + POT_W + 20   # approximate sig_bus_x
-                width = bus_x + SW_R*2 + 20 + JACK_W + 20
-            else:
-                width = COL_C + POT_W + JACK_W + 50
+            sw_x = None
 
-    total_h = top_margin + n*ROW_H + bot_margin
+    # Stage 3: Output jack
+    jack_x = x
+    total_w = jack_x + JACK_W + GAP
+
+    # Total height: n pickup rows + margins
+    total_h = top_margin + n * ROW_H + bot_margin
     GND_Y   = total_h - bot_margin + 10
 
+    if width is None:
+        width = total_w
+
+    # ── SVG header ────────────────────────────────────────────────────────
     s  = f'<svg width="100%" viewBox="0 0 {width} {total_h}" xmlns="http://www.w3.org/2000/svg">'
     s += f'<rect width="100%" height="100%" fill="{BG}"/>'
-    s += _text(width/2, 12, f"{layout} — {wiring} wiring", size=10, fill=SUB, italic=True)
-    s += _line(COL_A, GND_Y, width-10, GND_Y, stroke=GND_COL, sw=1, dash="6 3")
+    s += _text(width/2, 14, f"{layout} — {wiring} wiring", size=10, fill=SUB, italic=True)
+    # Dashed ground rail
+    s += _line(GAP, GND_Y, width-GAP, GND_Y, stroke=GND_COL, sw=1, dash="6 3")
 
-    # ── Pickups ──────────────────────────────────────────────────────────
-    hot_lugs = []
+    # ── Draw pickups ──────────────────────────────────────────────────────
+    hot_lugs = []   # (x, y, active) per pickup — right edge of pickup box
     for i, p in enumerate(pu_data):
         act = i in active_indices
-        ry  = top_margin + i*ROW_H
-        svg_pu, hot_lug, gnd_lug = draw_pickup(
-            COL_A, ry, PU_W, PU_H,
+        ry  = top_margin + i * ROW_H
+        svg_pu, lugs = draw_pickup(
+            pu_x, ry, PU_W, PU_H,
             p["pos"], p["type"], p["coil_config"], p["coil_side"],
             p["polarity"], act,
             height_mm=p.get("height_mm", 2.5),
             tbleed=p.get("tbleed", "none"),
         )
         s += svg_pu
-        hot_lugs.append((hot_lug[0], hot_lug[1], act))
-        gx = COL_A + PU_W + 8
-        s += _line(gnd_lug[0], gnd_lug[1], gx, gnd_lug[1], stroke=GND_COL, sw=1.2)
-        s += _line(gx, gnd_lug[1], gx, GND_Y, stroke=GND_COL, sw=1.2)
+        hot_lugs.append((lugs["hot"][0], lugs["hot"][1], act))
+        # Ground wire: short stub right then down
+        gx = pu_x + PU_W + 6
+        s += _line(lugs["gnd"][0], lugs["gnd"][1], gx, lugs["gnd"][1], stroke=GND_COL, sw=1.2)
+        s += _line(gx, lugs["gnd"][1], gx, GND_Y, stroke=GND_COL, sw=1.2)
         s += _gnd(gx, GND_Y)
 
-    # ── SHARED-VOL (SSS / HSS / HHS / SS-shared) ─────────────────────────
+    # ── SHARED-VOL layout ─────────────────────────────────────────────────
     if shared_vol:
-        bus_x = COL_B - SW_R*2 - 16
-        sw_cx = COL_B - SW_R - 6
-        ys    = [hl[1] for hl in hot_lugs]
+        ys = [hl[1] for hl in hot_lugs]
+        cluster_mid_y = top_margin + (n * ROW_H) / 2   # vertical centre of pickup cluster
+        bus_x = sw_x - SW_R - GAP//2                   # hot bus just left of switch
 
-        # Hot wires → vertical bus
+        # Hot wires from each pickup to the vertical bus
         for (hx, hy, act) in hot_lugs:
             s += _line(hx, hy, bus_x, hy,
                        stroke=HOT if act else INACTIVE, sw=WIRE_W,
@@ -264,183 +313,187 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
             for hy in ys[1:]:
                 s += _dot(bus_x, hy, fill=HOT)
 
-        # Selector switch
-        sw_cy  = top_margin + (n*ROW_H)/2
+        # Selector switch centred on pickup cluster
         n_pos  = 5 if n >= 3 else 3
         mid_ai = sorted(active_indices)[len(active_indices)//2] if active_indices else 0
-        sw_pos = round(mid_ai*(n_pos-1)/max(n-1, 1))
-        svg_sw, sw_inp, sw_out = draw_selector_switch(sw_cx, sw_cy, n_pos, sw_pos)
+        sw_pos = round(mid_ai * (n_pos-1) / max(n-1, 1))
+        svg_sw, sw_lugs = draw_selector_switch(sw_x, cluster_mid_y, n_pos, sw_pos)
         s += svg_sw
-        s += _line(bus_x, sw_cy, sw_inp[0], sw_inp[1], stroke=HOT, sw=WIRE_W)
-        if min(ys) < sw_cy - 2:
-            s += _line(bus_x, min(ys), bus_x, sw_cy, stroke=HOT, sw=WIRE_W)
+        # Bus → switch input (horizontal)
+        s += _line(bus_x, cluster_mid_y, sw_lugs["inp"][0], sw_lugs["inp"][1],
+                   stroke=HOT, sw=WIRE_W)
+        # Extend bus from top pickup to switch level if needed
+        if min(ys) < cluster_mid_y - 2:
+            s += _line(bus_x, min(ys), bus_x, cluster_mid_y, stroke=HOT, sw=WIRE_W)
 
-        # Master vol
-        vol_pot_y = sw_cy - POT_H/2
+        # Switch output → Master vol lug1 (horizontal)
+        vol_pot_y = cluster_mid_y - POT_H/2
         vol_pct   = pu_data[0].get("vol_pct", 100)
-        svg_v, vl1, vl2, vl3 = draw_pot(COL_B, vol_pot_y, POT_W, POT_H,
-                                          "Master vol", vol_pct, "vol", True)
+        svg_v, v_lugs = draw_pot(vol_x, vol_pot_y, POT_W, POT_H,
+                                  "Master vol", vol_pct, "vol", True)
         s += svg_v
-        s += _line(sw_out[0], sw_out[1], vl1[0], vl1[1], stroke=SIG, sw=WIRE_W)
-        s += _line(vl3[0], vl3[1], vl3[0], GND_Y, stroke=GND_COL, sw=1.2)
-        s += _gnd(vl3[0], GND_Y)
+        s += _line(sw_lugs["out"][0], sw_lugs["out"][1],
+                   v_lugs["in"][0],  v_lugs["in"][1], stroke=SIG, sw=WIRE_W)
+        s += _line(v_lugs["gnd"][0], v_lugs["gnd"][1],
+                   v_lugs["gnd"][0], GND_Y, stroke=GND_COL, sw=1.2)
+        s += _gnd(v_lugs["gnd"][0], GND_Y)
 
-        # Tone pots + caps
+        # Unique tone pots + caps
         seen = {}; tone_slots = []
         for i, p in enumerate(pu_data):
             tm = tone_map[i] if i < len(tone_map) else ""
             if tm and tm not in seen:
                 seen[tm] = i; tone_slots.append((tm, p))
 
-        src     = vl2 if wiring == "50s" else vl1
-        src_col = SIG  if wiring == "50s" else HOT
+        # 50s: tone from vol wiper; modern: from vol input lug
+        src     = v_lugs["out"] if wiring == "50s" else v_lugs["in"]
+        src_col = SIG            if wiring == "50s" else HOT
         if tone_slots:
             s += _dot(src[0], src[1], fill=src_col)
 
+        last_tone_out = src   # wire daisy-chains through tone pots
         for ti, (tname, p) in enumerate(tone_slots):
-            tone_pct = p.get("tone_pct", 100)
-            cap_nf   = int(p.get("Ctone_nf", 22))
-            tcx      = COL_C + ti*(POT_W+16)
-            svg_t, tl1, tl2, tl3 = draw_pot(tcx, vol_pot_y, POT_W, POT_H,
-                                              tname.replace("tone","Tone "),
-                                              tone_pct, "tone", True)
+            tx      = tone_xs[ti]
+            t_pct   = p.get("tone_pct", 100)
+            cap_nf  = int(p.get("Ctone_nf", 22))
+            svg_t, t_lugs = draw_pot(tx, vol_pot_y, POT_W, POT_H,
+                                      tname.replace("tone","Tone "),
+                                      t_pct, "tone", True)
             s += svg_t
-            # Horizontal bus → tone lug1
-            bus_y = src[1]
-            s += _line(src[0] if ti==0 else COL_C+(ti-1)*(POT_W+16)+POT_W+8,
-                       bus_y, tl1[0], bus_y, stroke=src_col, sw=1.2, dash="4 2")
-            if abs(bus_y - tl1[1]) > 1:
-                s += _line(tl1[0], bus_y, tl1[0], tl1[1],
-                           stroke=src_col, sw=1.2, dash="4 2")
-            s += _line(tl3[0], tl3[1], tl3[0], GND_Y, stroke=GND_COL, sw=1.2)
-            s += _gnd(tl3[0], GND_Y)
+            # Horizontal wire from previous source to this tone pot input
+            s += _line(last_tone_out[0], last_tone_out[1],
+                       t_lugs["in"][0],  last_tone_out[1],
+                       stroke=src_col, sw=1.2, dash="4 2")
+            s += _line(t_lugs["in"][0], last_tone_out[1],
+                       t_lugs["in"][0], t_lugs["in"][1],
+                       stroke=src_col, sw=1.2, dash="4 2")
+            s += _line(t_lugs["gnd"][0], t_lugs["gnd"][1],
+                       t_lugs["gnd"][0], GND_Y, stroke=GND_COL, sw=1.2)
+            s += _gnd(t_lugs["gnd"][0], GND_Y)
+            # Cap below tone pot
             cap_y = vol_pot_y + POT_H + CAP_GAP
-            svg_cap, cap_top, cap_bot = draw_cap(tl2[0], cap_y, h=CAP_H,
-                                                  label=f"{cap_nf}nF", active=True)
+            svg_cap, cap_lugs = draw_cap(t_lugs["out"][0], cap_y, CAP_H,
+                                          f"{cap_nf}nF", True)
             s += svg_cap
-            s += _line(tl2[0], tl2[1], cap_top[0], cap_top[1], stroke=TONE_C, sw=1.2)
-            s += _line(cap_bot[0], cap_bot[1], cap_bot[0], GND_Y, stroke=GND_COL, sw=1.2)
-            s += _gnd(cap_bot[0], GND_Y)
+            s += _line(t_lugs["out"][0], t_lugs["out"][1],
+                       cap_lugs["top"][0], cap_lugs["top"][1], stroke=TONE_C, sw=1.2)
+            s += _line(cap_lugs["bot"][0], cap_lugs["bot"][1],
+                       cap_lugs["bot"][0], GND_Y, stroke=GND_COL, sw=1.2)
+            s += _gnd(cap_lugs["bot"][0], GND_Y)
+            last_tone_out = t_lugs["out"]
 
-        # Vol wiper → jack
-        last_tcx   = COL_C + max(0, len(tone_slots)-1)*(POT_W+16)
-        jack_x_pos = last_tcx + POT_W + 24
-        jack_y     = vol_pot_y + (POT_H-JACK_H)//2
-        s += _line(vl2[0], vl2[1], jack_x_pos, vl2[1], stroke=SIG, sw=WIRE_W)
-        svg_jack, inp, slv = draw_jack(jack_x_pos, jack_y, JACK_W, JACK_H)
+        # Vol wiper → jack (straight horizontal)
+        jack_in_y = v_lugs["out"][1]
+        jack_y    = jack_in_y - JACK_H/2
+        s += _line(v_lugs["out"][0], jack_in_y, jack_x, jack_in_y, stroke=SIG, sw=WIRE_W)
+        svg_jack, j_lugs = draw_jack(jack_x, jack_y, JACK_W, JACK_H)
         s += svg_jack
-        # vl2 (vol wiper) arrives horizontally at inp (jack left side)
-        if abs(vl2[1] - inp[1]) > 1:
-            s += _line(jack_x_pos, vl2[1], jack_x_pos, inp[1], stroke=SIG, sw=WIRE_W)
-        s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
-        s += _gnd(slv[0], GND_Y)
+        s += _line(j_lugs["slv"][0], j_lugs["slv"][1],
+                   j_lugs["slv"][0], GND_Y, stroke=GND_COL, sw=1.2)
+        s += _gnd(j_lugs["slv"][0], GND_Y)
 
-    # ── INDEPENDENT-VOL (HH / SS / PP / H) ───────────────────────────────
+    # ── INDEPENDENT-VOL layout ────────────────────────────────────────────
     else:
-        # Signal bus sits just right of the tone column
-        sig_bus_x = COL_C + POT_W + 20
+        sig_ys = []   # y of each vol wiper output, for signal bus
 
         for i, p in enumerate(pu_data):
             act      = i in active_indices
-            ry       = top_margin + i*ROW_H
-            pot_y    = ry + max(0, (PU_H-POT_H)//2)
+            ry       = top_margin + i * ROW_H
+            # Vertically centre the pot within the row
+            pot_y    = ry + max(0, (PU_H - POT_H) // 2)
             vol_pct  = p.get("vol_pct", 100)
             tone_pct = p.get("tone_pct", 100)
             cap_nf   = int(p.get("Ctone_nf", 22))
             has_tone = p.get("has_tone", True)
             hx, hy   = hot_lugs[i][0], hot_lugs[i][1]
 
-            svg_v, vl1, vl2, vl3 = draw_pot(COL_B, pot_y, POT_W, POT_H,
-                                              "Vol", vol_pct, "vol", act)
+            # Vol pot
+            svg_v, v_lugs = draw_pot(vol_x, pot_y, POT_W, POT_H,
+                                      "Vol", vol_pct, "vol", act)
             s += svg_v
-
-            # Hot → vol lug1 (horizontal then drop if needed)
-            s += _line(hx, hy, vl1[0], hy,
+            # Hot → vol input: horizontal to vol_x then drop to lug
+            s += _line(hx, hy, v_lugs["in"][0], hy,
                        stroke=HOT if act else INACTIVE, sw=WIRE_W,
                        dash="" if act else "4 2")
-            if abs(hy - vl1[1]) > 1:
-                s += _line(vl1[0], hy, vl1[0], vl1[1],
+            if abs(hy - v_lugs["in"][1]) > 1:
+                s += _line(v_lugs["in"][0], hy, v_lugs["in"][0], v_lugs["in"][1],
                            stroke=HOT if act else INACTIVE, sw=WIRE_W)
+            s += _line(v_lugs["gnd"][0], v_lugs["gnd"][1],
+                       v_lugs["gnd"][0], GND_Y, stroke=GND_COL, sw=1.2)
+            s += _gnd(v_lugs["gnd"][0], GND_Y)
 
-            s += _line(vl3[0], vl3[1], vl3[0], GND_Y, stroke=GND_COL, sw=1.2)
-            s += _gnd(vl3[0], GND_Y)
-
-            if has_tone:
-                svg_t, tl1, tl2, tl3 = draw_pot(COL_C, pot_y, POT_W, POT_H,
-                                                  "Tone", tone_pct, "tone", act)
+            if has_tone and tone_x is not None:
+                svg_t, t_lugs = draw_pot(tone_x, pot_y, POT_W, POT_H,
+                                          "Tone", tone_pct, "tone", act)
                 s += svg_t
-
-                src     = vl2 if wiring == "50s" else vl1
-                src_col = SIG  if wiring == "50s" else HOT
-                bus_y   = src[1]
-                # Horizontal bus → tone lug1
-                s += _line(src[0], bus_y, tl1[0], bus_y,
+                # 50s: from vol wiper; modern: from vol input
+                src     = v_lugs["out"] if wiring == "50s" else v_lugs["in"]
+                src_col = SIG            if wiring == "50s" else HOT
+                s += _line(src[0], src[1], t_lugs["in"][0], src[1],
                            stroke=src_col, sw=1.2, dash="4 2")
-                if abs(bus_y - tl1[1]) > 1:
-                    s += _line(tl1[0], bus_y, tl1[0], tl1[1],
+                if abs(src[1] - t_lugs["in"][1]) > 1:
+                    s += _line(t_lugs["in"][0], src[1], t_lugs["in"][0], t_lugs["in"][1],
                                stroke=src_col, sw=1.2, dash="4 2")
                 s += _dot(src[0], src[1], fill=src_col)
-
-                s += _line(tl3[0], tl3[1], tl3[0], GND_Y, stroke=GND_COL, sw=1.2)
-                s += _gnd(tl3[0], GND_Y)
-
+                s += _line(t_lugs["gnd"][0], t_lugs["gnd"][1],
+                           t_lugs["gnd"][0], GND_Y, stroke=GND_COL, sw=1.2)
+                s += _gnd(t_lugs["gnd"][0], GND_Y)
+                # Cap below tone pot
                 cap_y = pot_y + POT_H + CAP_GAP
-                svg_cap, cap_top, cap_bot = draw_cap(tl2[0], cap_y, h=CAP_H,
-                                                      label=f"{cap_nf}nF", active=act)
+                svg_cap, cap_lugs = draw_cap(t_lugs["out"][0], cap_y, CAP_H,
+                                              f"{cap_nf}nF", act)
                 s += svg_cap
-                s += _line(tl2[0], tl2[1], cap_top[0], cap_top[1],
+                s += _line(t_lugs["out"][0], t_lugs["out"][1],
+                           cap_lugs["top"][0], cap_lugs["top"][1],
                            stroke=TONE_C if act else INACTIVE, sw=1.2)
-                s += _line(cap_bot[0], cap_bot[1], cap_bot[0], GND_Y,
-                           stroke=GND_COL, sw=1.2)
-                s += _gnd(cap_bot[0], GND_Y)
+                s += _line(cap_lugs["bot"][0], cap_lugs["bot"][1],
+                           cap_lugs["bot"][0], GND_Y, stroke=GND_COL, sw=1.2)
+                s += _gnd(cap_lugs["bot"][0], GND_Y)
 
-            # Vol wiper output → signal bus (straight horizontal from fixed bottom terminal)
-            s += _line(vl2[0], vl2[1], sig_bus_x, vl2[1],
+            # Vol wiper → signal bus (horizontal)
+            s += _line(v_lugs["out"][0], v_lugs["out"][1], bus_x, v_lugs["out"][1],
                        stroke=SIG if act else INACTIVE, sw=WIRE_W,
                        dash="" if act else "4 2")
+            sig_ys.append(v_lugs["out"][1])
 
-        # Vertical signal bus + optional selector switch + jack
-        out_ys = [top_margin + i*ROW_H + max(0,(PU_H-POT_H)//2) + POT_H
-                  for i in range(n)]
-        if len(out_ys) > 1:
-            s += _line(sig_bus_x, min(out_ys), sig_bus_x, max(out_ys),
-                       stroke=SIG, sw=WIRE_W)
-        mid_y = (min(out_ys)+max(out_ys))/2
+        # Vertical signal collection bus
+        if len(sig_ys) > 1:
+            s += _line(bus_x, min(sig_ys), bus_x, max(sig_ys), stroke=SIG, sw=WIRE_W)
+        mid_y = (min(sig_ys) + max(sig_ys)) / 2
 
-        # Selector switch for multi-pickup independent-vol layouts (HH, SS, PP)
-        if n > 1:
-            sw_cx  = sig_bus_x + SW_R + 10
-            sw_cy  = mid_y
+        if sw_x is not None:
+            # 3-way selector switch between bus and jack
             n_pos  = 3
             mid_ai = sorted(active_indices)[len(active_indices)//2] if active_indices else 0
-            sw_pos = round(mid_ai*(n_pos-1)/max(n-1,1))
-            svg_sw, sw_inp, sw_out = draw_selector_switch(sw_cx, sw_cy, n_pos, sw_pos,
-                                                           label="3-way")
+            sw_pos = round(mid_ai * (n_pos-1) / max(n-1, 1))
+            svg_sw, sw_lugs = draw_selector_switch(sw_x, mid_y, n_pos, sw_pos)
             s += svg_sw
-            s += _line(sig_bus_x, mid_y, sw_inp[0], sw_inp[1], stroke=SIG, sw=WIRE_W)
-            jack_in_x = sw_out[0] + 10   # gap after switch output
-            jack_in_y = sw_out[1]
+            s += _line(bus_x, mid_y, sw_lugs["inp"][0], sw_lugs["inp"][1],
+                       stroke=SIG, sw=WIRE_W)
+            # Switch output → jack (horizontal)
+            jack_in_x = sw_lugs["out"][0]
+            jack_in_y = sw_lugs["out"][1]
         else:
-            jack_in_x = sig_bus_x + 10
+            jack_in_x = bus_x
             jack_in_y = mid_y
 
         jack_y = jack_in_y - JACK_H/2
-        s += _line(jack_in_x, jack_in_y, jack_in_x + 4, jack_in_y, stroke=SIG, sw=WIRE_W)
-        svg_jack, inp, slv = draw_jack(jack_in_x + 4, jack_y, JACK_W, JACK_H)
+        s += _line(jack_in_x, jack_in_y, jack_x, jack_in_y, stroke=SIG, sw=WIRE_W)
+        svg_jack, j_lugs = draw_jack(jack_x, jack_y, JACK_W, JACK_H)
         s += svg_jack
-        s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
-        s += _gnd(slv[0], GND_Y)
+        s += _line(j_lugs["slv"][0], j_lugs["slv"][1],
+                   j_lugs["slv"][0], GND_Y, stroke=GND_COL, sw=1.2)
+        s += _gnd(j_lugs["slv"][0], GND_Y)
 
-    note = ("50s: tone shunts at vol wiper" if wiring=="50s"
+    # ── Footer ─────────────────────────────────────────────────────────────
+    note = ("50s: tone shunts at vol wiper" if wiring == "50s"
             else "Modern: tone shunts at vol input lug")
-    s += _text(width/2, total_h-10, note, size=8, fill=SUB, italic=True)
-
-    # Colour legend (bottom-left)
-    lx, ly = 10, total_h - 38
-    for col, label in [(HOT,"hot"), (SIG,"signal"), (TONE_C,"tone"), (GND_COL,"ground")]:
+    s += _text(width/2, total_h-46, note, size=8, fill=SUB, italic=True)
+    # Colour legend
+    lx, ly = GAP, total_h-30
+    for col, label in [(HOT,"hot"),(SIG,"signal"),(TONE_C,"tone"),(GND_COL,"ground")]:
         s += _line(lx, ly, lx+16, ly, stroke=col, sw=2)
         s += _text(lx+20, ly, label, size=7, fill=SUB, anchor="start")
-        lx += 64
-
+        lx += 62
     s += "</svg>"
     return s
