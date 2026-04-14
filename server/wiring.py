@@ -212,9 +212,14 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         if shared_vol:
             width = COL_C + n_tones*(POT_W+16) + JACK_W + 40
         else:
-            # extra room for 3-way switch on multi-pickup independent-vol layouts
-            sw_extra = SW_R*2 + 16 if n > 1 else 0
-            width = JACK_X + sw_extra + JACK_W + 16
+            # sig_bus_x = JACK_X - 12, but for switch layouts we compute dynamically
+            # For n>1: bus(JACK_X-12) + SW_R*2+20 + JACK_W + 16
+            # For n==1: bus + short gap + JACK_W + 16
+            if n > 1:
+                bus_x = COL_C + POT_W + 20   # approximate sig_bus_x
+                width = bus_x + SW_R*2 + 20 + JACK_W + 20
+            else:
+                width = COL_C + POT_W + JACK_W + 50
 
     total_h = top_margin + n*ROW_H + bot_margin
     GND_Y   = total_h - bot_margin + 10
@@ -332,7 +337,8 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
 
     # ── INDEPENDENT-VOL (HH / SS / PP / H) ───────────────────────────────
     else:
-        sig_bus_x = JACK_X - 12
+        # Signal bus sits just right of the tone column
+        sig_bus_x = COL_C + POT_W + 20
 
         for i, p in enumerate(pu_data):
             act      = i in active_indices
@@ -394,17 +400,16 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
                        dash="" if act else "4 2")
 
         # Vertical signal bus + optional selector switch + jack
-        # vl2 is now at (COL_B+POT_W/2, pot_y+POT_H) — fixed bottom-centre of each vol pot
         out_ys = [top_margin + i*ROW_H + max(0,(PU_H-POT_H)//2) + POT_H
                   for i in range(n)]
         if len(out_ys) > 1:
             s += _line(sig_bus_x, min(out_ys), sig_bus_x, max(out_ys),
                        stroke=SIG, sw=WIRE_W)
-        mid_y  = (min(out_ys)+max(out_ys))/2
+        mid_y = (min(out_ys)+max(out_ys))/2
 
         # Selector switch for multi-pickup independent-vol layouts (HH, SS, PP)
         if n > 1:
-            sw_cx  = sig_bus_x + SW_R + 8
+            sw_cx  = sig_bus_x + SW_R + 10
             sw_cy  = mid_y
             n_pos  = 3
             mid_ai = sorted(active_indices)[len(active_indices)//2] if active_indices else 0
@@ -413,15 +418,15 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
                                                            label="3-way")
             s += svg_sw
             s += _line(sig_bus_x, mid_y, sw_inp[0], sw_inp[1], stroke=SIG, sw=WIRE_W)
-            jack_in_x = sw_out[0]
+            jack_in_x = sw_out[0] + 10   # gap after switch output
             jack_in_y = sw_out[1]
         else:
-            jack_in_x = sig_bus_x
+            jack_in_x = sig_bus_x + 10
             jack_in_y = mid_y
 
         jack_y = jack_in_y - JACK_H/2
-        s += _line(jack_in_x, jack_in_y, JACK_X, jack_in_y, stroke=SIG, sw=WIRE_W)
-        svg_jack, inp, slv = draw_jack(JACK_X, jack_y, JACK_W, JACK_H)
+        s += _line(jack_in_x, jack_in_y, jack_in_x + 4, jack_in_y, stroke=SIG, sw=WIRE_W)
+        svg_jack, inp, slv = draw_jack(jack_in_x + 4, jack_y, JACK_W, JACK_H)
         s += svg_jack
         s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
         s += _gnd(slv[0], GND_Y)
