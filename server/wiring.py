@@ -108,7 +108,13 @@ def draw_pot(x, y, w, h, label, value_pct, pot_type="vol", active=True):
     s += _line(wx, ay1, wx, ay2, stroke=scol, sw=1.5)
     s += _path(f"M{wx-4:.1f} {ay1+5:.1f} L{wx:.1f} {ay1:.1f} L{wx+4:.1f} {ay1+5:.1f}", stroke=scol, sw=1.5)
     s += _text(x+w/2, y+h-8, f"{int(value_pct)}%", size=8, fill=scol)
-    l1 = (tx, ty+th/2); l3 = (tx+tw, ty+th/2); l2 = (wx, ay2)
+    # Fixed output terminal at bottom-centre of pot box (wiper connects to it internally)
+    out_x = x + w/2
+    out_y = y + h
+    s += _line(wx, ay2, out_x, ay2, stroke=scol, sw=1, dash="2 2")  # internal stub
+    s += _line(out_x, ay2, out_x, out_y, stroke=scol, sw=1.5)        # exit wire
+    l1 = (tx, ty+th/2); l3 = (tx+tw, ty+th/2)
+    l2 = (out_x, out_y)   # fixed output point at bottom-centre
     s += _circle(l1[0], l1[1], 3, fill=HOT, stroke=HOT)
     s += _circle(l3[0], l3[1], 3, fill=GND_COL, stroke=GND_COL)
     s += _circle(l2[0], l2[1], 3, fill=scol, stroke=scol)
@@ -190,7 +196,7 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
     COL_A        = 10
     COL_B        = 165
     COL_C        = 300
-    JACK_X       = 420
+    JACK_X       = 470   # wider to accommodate 3-way switch for HH/SS/PP
     top_margin   = 20
     bot_margin   = 60
 
@@ -206,7 +212,9 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         if shared_vol:
             width = COL_C + n_tones*(POT_W+16) + JACK_W + 40
         else:
-            width = JACK_X + JACK_W + 16
+            # extra room for 3-way switch on multi-pickup independent-vol layouts
+            sw_extra = SW_R*2 + 16 if n > 1 else 0
+            width = JACK_X + sw_extra + JACK_W + 16
 
     total_h = top_margin + n*ROW_H + bot_margin
     GND_Y   = total_h - bot_margin + 10
@@ -380,24 +388,41 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
                            stroke=GND_COL, sw=1.2)
                 s += _gnd(cap_bot[0], GND_Y)
 
-            # Vol wiper → signal bus
+            # Vol wiper output → signal bus (straight horizontal from fixed bottom terminal)
             s += _line(vl2[0], vl2[1], sig_bus_x, vl2[1],
                        stroke=SIG if act else INACTIVE, sw=WIRE_W,
                        dash="" if act else "4 2")
 
-        # Vertical signal bus + jack
-        wiper_ys = [top_margin + i*ROW_H + max(0,(PU_H-POT_H)//2) + POT_H + 14
-                    for i in range(n)]
-        if len(wiper_ys) > 1:
-            s += _line(sig_bus_x, min(wiper_ys), sig_bus_x, max(wiper_ys),
+        # Vertical signal bus + optional selector switch + jack
+        # vl2 is now at (COL_B+POT_W/2, pot_y+POT_H) — fixed bottom-centre of each vol pot
+        out_ys = [top_margin + i*ROW_H + max(0,(PU_H-POT_H)//2) + POT_H
+                  for i in range(n)]
+        if len(out_ys) > 1:
+            s += _line(sig_bus_x, min(out_ys), sig_bus_x, max(out_ys),
                        stroke=SIG, sw=WIRE_W)
-        mid_y  = (min(wiper_ys)+max(wiper_ys))/2
-        jack_y = mid_y - JACK_H/2
-        s += _line(sig_bus_x, mid_y, JACK_X, mid_y, stroke=SIG, sw=WIRE_W)
+        mid_y  = (min(out_ys)+max(out_ys))/2
+
+        # Selector switch for multi-pickup independent-vol layouts (HH, SS, PP)
+        if n > 1:
+            sw_cx  = sig_bus_x + SW_R + 8
+            sw_cy  = mid_y
+            n_pos  = 3
+            mid_ai = sorted(active_indices)[len(active_indices)//2] if active_indices else 0
+            sw_pos = round(mid_ai*(n_pos-1)/max(n-1,1))
+            svg_sw, sw_inp, sw_out = draw_selector_switch(sw_cx, sw_cy, n_pos, sw_pos,
+                                                           label="3-way")
+            s += svg_sw
+            s += _line(sig_bus_x, mid_y, sw_inp[0], sw_inp[1], stroke=SIG, sw=WIRE_W)
+            jack_in_x = sw_out[0]
+            jack_in_y = sw_out[1]
+        else:
+            jack_in_x = sig_bus_x
+            jack_in_y = mid_y
+
+        jack_y = jack_in_y - JACK_H/2
+        s += _line(jack_in_x, jack_in_y, JACK_X, jack_in_y, stroke=SIG, sw=WIRE_W)
         svg_jack, inp, slv = draw_jack(JACK_X, jack_y, JACK_W, JACK_H)
         s += svg_jack
-        # Signal bus connects to jack input lug (left side)
-        # inp is already at (JACK_X, jack_y+JACK_H/2) = left centre
         s += _line(slv[0], slv[1], slv[0], GND_Y, stroke=GND_COL, sw=1.2)
         s += _gnd(slv[0], GND_Y)
 
