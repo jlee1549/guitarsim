@@ -189,7 +189,7 @@ ROW_GAP      = 28   # vertical gap between pickup rows
 ROW_H = max(PU_H, POT_H + CAP_GAP + CAP_H) + ROW_GAP
 
 def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
-                    tone_map, width=None):
+                    tone_map, width=None, toggle_idx=None):
     """
     Flow-based layout: every x-position is computed from the previous stage's
     right edge + GAP. No hardcoded column numbers.
@@ -316,7 +316,7 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
         # Selector switch centred on pickup cluster
         n_pos  = 5 if n >= 3 else 3
         mid_ai = sorted(active_indices)[len(active_indices)//2] if active_indices else 0
-        sw_pos = round(mid_ai * (n_pos-1) / max(n-1, 1))
+        sw_pos = toggle_idx if toggle_idx is not None else round(mid_ai * (n_pos-1) / max(n-1, 1))
         svg_sw, sw_lugs = draw_selector_switch(sw_x, cluster_mid_y, n_pos, sw_pos)
         s += svg_sw
         # Bus → switch input (horizontal)
@@ -465,7 +465,7 @@ def make_wiring_svg(pu_data, layout, wiring, active_indices, shared_vol,
             # 3-way selector switch between bus and jack
             n_pos  = 3
             mid_ai = sorted(active_indices)[len(active_indices)//2] if active_indices else 0
-            sw_pos = round(mid_ai * (n_pos-1) / max(n-1, 1))
+            sw_pos = toggle_idx if toggle_idx is not None else round(mid_ai * (n_pos-1) / max(n-1, 1))
             svg_sw, sw_lugs = draw_selector_switch(sw_x, mid_y, n_pos, sw_pos)
             s += svg_sw
             s += _line(bus_x, mid_y, sw_lugs["inp"][0], sw_lugs["inp"][1],

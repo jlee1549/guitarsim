@@ -319,6 +319,7 @@ class GuitarSim:
             active,
             self.state.shared_vol,
             self.state.tone_map,
+            toggle_idx=self.state.toggle_idx,
         )
         import base64
         b64 = base64.b64encode(svg_str.encode()).decode()
